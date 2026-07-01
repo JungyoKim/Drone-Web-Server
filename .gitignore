@@ -2,6 +2,8 @@ node_modules/
 .env
 .env.local
 bun.lockb
-# firmware secrets + build
-firmware/src/config.h
-firmware/.pio/
+# agent tooling (daisyUI loaded via CDN at runtime, skill files not needed by app)
+.agents/
+skills-lock.json
+# firmware lives in its own repo (JungyoKim/Drone-Gateway)
+firmware/
