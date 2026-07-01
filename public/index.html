@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0b0f14" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Tello Voice</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #121a24;
+    --panel-2: #18222f;
+    --line: #26313f;
+    --text: #e7edf3;
+    --muted: #90a0b3;
+    --accent: #2f9be0;
+    --accent-2: #1f6fb0;
+    --ok: #2fbf6b;
+    --warn: #e0a52f;
+    --bad: #e04b4b;
+    --emergency: #e11d1d;
+    --emergency-2: #a30f0f;
+    --radius: 14px;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    /* room for the fixed emergency header */
+    padding: calc(var(--safe-top) + 118px) 12px calc(var(--safe-bottom) + 24px);
+    max-width: 560px;
+    margin: 0 auto;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* ---------- Fixed emergency header ---------- */
+  #topbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 1000;
+    padding: calc(var(--safe-top) + 6px) 10px 8px;
+    background: linear-gradient(180deg, rgba(11,15,20,0.98), rgba(11,15,20,0.92));
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(6px);
+  }
+  #statusRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    min-height: 20px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .dot.off { background: var(--bad); }
+  .dot.warn { background: var(--warn); }
+  #batteryPill { margin-left: auto; }
+
+  #emergencyBtn {
+    width: 100%;
+    min-height: 66px;
+    border: none;
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, var(--emergency), var(--emergency-2));
+    color: #fff;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.08) inset, 0 6px 18px rgba(225,29,29,0.35);
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #emergencyBtn:active { filter: brightness(0.85); transform: translateY(1px); }
+  #emergencyBtn small { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; opacity: 0.85; text-transform: none; }
+
+  /* ---------- Panels ---------- */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    font-weight: 700;
+  }
+
+  /* ---------- Connection ---------- */
+  #connRow { display: flex; gap: 8px; }
+  #tokenInput {
+    flex: 1;
+    min-width: 0;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 15px;
+  }
+  #tokenInput::placeholder { color: var(--muted); }
+
+  button.btn {
+    -webkit-appearance: none;
+    appearance: none;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 600;
+    padding: 12px 14px;
+    cursor: pointer;
+    touch-action: manipulation;
+    min-height: 48px;
+  }
+  button.btn:active { filter: brightness(1.25); }
+  button.btn:disabled { opacity: 0.45; cursor: default; }
+  button.btn.primary { background: linear-gradient(180deg, var(--accent), var(--accent-2)); border-color: transparent; }
+  button.btn.go { background: linear-gradient(180deg, #2fbf6b, #1c9152); border-color: transparent; }
+  button.btn.stop { background: linear-gradient(180deg, #d9863a, #b0611c); border-color: transparent; }
+
+  /* ---------- Mic ---------- */
+  #micBtn {
+    width: 100%;
+    min-height: 120px;
+    border-radius: var(--radius);
+    border: 2px solid var(--accent-2);
+    background: radial-gradient(120% 120% at 50% 0%, #1c2b3b, #101a26);
+    color: var(--text);
+    font-size: 20px;
+    font-weight: 700;
+    cursor: pointer;
+    touch-action: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: transform 0.05s ease, box-shadow 0.1s ease;
+  }
+  #micBtn .mic-sub { font-size: 12px; font-weight: 500; color: var(--muted); }
+  #micBtn.recording {
+    border-color: var(--bad);
+    background: radial-gradient(120% 120% at 50% 0%, #3a1414, #200a0a);
+    box-shadow: 0 0 0 4px rgba(224,75,75,0.25), 0 0 24px rgba(224,75,75,0.4);
+    animation: pulse 1s infinite ease-in-out;
+  }
+  #micBtn.starting { opacity: 0.8; }
+  #micBtn:disabled { opacity: 0.5; }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(0.99); } }
+
+  /* ---------- Controls ---------- */
+  .selrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .selrow label { flex: 0 0 auto; }
+  .selrow input[type="number"] {
+    width: 84px;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 15px;
+  }
+  .selrow .range { flex: 1; }
+  .selrow input[type="range"] { width: 100%; }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+  /* movement pad */
+  .pad {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .pad button { min-height: 58px; font-size: 16px; }
+  .pad .empty { visibility: hidden; }
+  .pad .fwd  { grid-column: 2; grid-row: 1; }
+  .pad .left { grid-column: 1; grid-row: 2; }
+  .pad .ctr  { grid-column: 2; grid-row: 2; }
+  .pad .right{ grid-column: 3; grid-row: 2; }
+  .pad .back { grid-column: 2; grid-row: 3; }
+
+  .updown { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .rotate { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .sectlabel { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 4px 0 6px; }
+
+  /* ---------- Log ---------- */
+  #log {
+    height: 240px;
+    overflow-y: auto;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-overflow-scrolling: touch;
+  }
+  .logline { padding: 3px 4px; border-bottom: 1px solid rgba(255,255,255,0.04); white-space: pre-wrap; word-break: break-word; }
+  .logline .t { color: var(--muted); }
+  .logline.sent  { color: #9fd0f2; }
+  .logline.ok    { color: #9ee6bd; }
+  .logline.fail  { color: #f2a0a0; }
+  .logline.err   { color: #ff9a9a; }
+  .logline.info  { color: var(--muted); }
+  .logline.parse { color: #d9c48a; }
+  .logline .cmd { color: #fff; font-weight: 600; }
+
+  /* ---------- Toast ---------- */
+  #toast {
+    position: fixed;
+    left: 12px; right: 12px;
+    bottom: calc(var(--safe-bottom) + 14px);
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+    max-width: 536px;
+    margin: 0 auto;
+  }
+  .toast-item {
+    background: var(--bad);
+    color: #fff;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.4);
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    word-break: break-word;
+  }
+  .toast-item.show { opacity: 1; transform: translateY(0); }
+  .toast-item.info { background: var(--accent-2); }
+</style>
+</head>
+<body>
+
+  <!-- Fixed emergency header (always visible) -->
+  <div id="topbar">
+    <div id="statusRow">
+      <span class="pill"><span id="connDot" class="dot"></span><span id="connText">disconnected</span></span>
+      <span class="pill"><span id="devDot" class="dot off"></span><span id="devText">drone offline</span></span>
+      <span class="pill" id="batteryPill">🔋 <span id="battText">—</span></span>
+    </div>
+    <button id="emergencyBtn" type="button">
+      EMERGENCY LAND
+      <small>tap to land now &middot; hardware button is the real backstop</small>
+    </button>
+  </div>
+
+  <!-- Connection -->
+  <div class="card">
+    <h2>Connection</h2>
+    <div id="connRow">
+      <input id="tokenInput" type="text" inputmode="text" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="browser token" />
+      <button id="connectBtn" class="btn primary" type="button">Connect</button>
+    </div>
+  </div>
+
+  <!-- Voice -->
+  <div class="card">
+    <h2>Voice</h2>
+    <button id="micBtn" type="button">
+      <span id="micLabel">🎤 Hold to Talk</span>
+      <span class="mic-sub" id="micSub">press &amp; hold, release to send</span>
+    </button>
+  </div>
+
+  <!-- Direct controls -->
+  <div class="card">
+    <h2>Direct Controls</h2>
+
+    <div class="row3" style="margin-bottom:12px;">
+      <button class="btn go"   id="btnTakeoff" type="button">Takeoff</button>
+      <button class="btn stop" id="btnLand"    type="button">Land</button>
+      <button class="btn"      id="btnBattery" type="button">Battery?</button>
+    </div>
+
+    <div class="sectlabel">Move</div>
+    <div class="selrow">
+      <label for="distNum">Distance</label>
+      <input id="distNum" type="number" min="20" max="500" step="10" value="50" />
+      <span>cm</span>
+      <input id="distRange" class="range" type="range" min="20" max="500" step="10" value="50" />
+    </div>
+
+    <div class="pad">
+      <button class="btn fwd"   data-move="forward" type="button">▲ Fwd</button>
+      <button class="btn left"  data-move="left"    type="button">◀ Left</button>
+      <button class="btn ctr empty" type="button" tabindex="-1" aria-hidden="true"></button>
+      <button class="btn right" data-move="right"   type="button">Right ▶</button>
+      <button class="btn back"  data-move="back"    type="button">▼ Back</button>
+    </div>
+
+    <div class="updown">
+      <button class="btn" data-move="up"   type="button">⤒ Up</button>
+      <button class="btn" data-move="down" type="button">⤓ Down</button>
+    </div>
+
+    <div class="sectlabel">Rotate</div>
+    <div class="selrow">
+      <label for="degNum">Degrees</label>
+      <input id="degNum" type="number" min="1" max="360" step="5" value="90" />
+      <span>&deg;</span>
+      <input id="degRange" class="range" type="range" min="1" max="360" step="5" value="90" />
+    </div>
+    <div class="rotate">
+      <button class="btn" data-rot="ccw" type="button">↺ CCW</button>
+      <button class="btn" data-rot="cw"  type="button">CW ↻</button>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="card">
+    <h2>Command Log</h2>
+    <div id="log" role="log" aria-live="polite"></div>
+  </div>
+
+  <div id="toast"></div>
+
+<script>
+"use strict";
+(function () {
+  // ---- Limits (mirror of LIMITS in src/protocol.ts) ----
+  var DIST_MIN = 20, DIST_MAX = 500;
+  var DEG_MIN = 1, DEG_MAX = 360;
+  var PING_MS = 10000;
+  var RECONNECT_MIN = 1000, RECONNECT_MAX = 15000;
+
+  // ---- Elements ----
+  var $ = function (id) { return document.getElementById(id); };
+  var connDot = $("connDot"), connText = $("connText");
+  var devDot = $("devDot"), devText = $("devText");
+  var battText = $("battText");
+  var tokenInput = $("tokenInput"), connectBtn = $("connectBtn");
+  var micBtn = $("micBtn"), micLabel = $("micLabel"), micSub = $("micSub");
+  var distNum = $("distNum"), distRange = $("distRange");
+  var degNum = $("degNum"), degRange = $("degRange");
+  var logEl = $("log"), toastEl = $("toast");
+
+  // ================= WebSocket =================
+  var ws = null;
+  var reconnectDelay = RECONNECT_MIN;
+  var reconnectTimer = null;
+  var pingTimer = null;
+  var manualClose = false;
+
+  function tokenFromUrl() {
+    try {
+      var p = new URLSearchParams(window.location.search).get("token");
+      return p ? p.trim() : "";
+    } catch (e) { return ""; }
+  }
+
+  function currentToken() { return tokenInput.value.trim(); }
+
+  function wsUrl(token) {
+    var proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return proto + "//" + window.location.host + "/ws/browser?token=" + encodeURIComponent(token);
+  }
+
+  function setConn(state, label) {
+    connText.textContent = label || state;
+    connDot.className = "dot";
+    if (state === "connected") connDot.classList.add("on");
+    else if (state === "connecting" || state === "reconnecting") connDot.classList.add("warn");
+    else connDot.classList.add("off");
+  }
+
+  function clearReconnect() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  }
+
+  function scheduleReconnect() {
+    clearReconnect();
+    var secs = Math.round(reconnectDelay / 1000);
+    setConn("reconnecting", "reconnecting in " + secs + "s\u2026");
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      if (!manualClose) connect();
+    }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
+  }
+
+  function connect() {
+    clearReconnect();
+    var token = currentToken();
+    if (!token) { setConn("disconnected", "enter a token"); return; }
+
+    // Tear down any existing socket first.
+    if (ws) {
+      try { ws.onclose = null; ws.onerror = null; ws.onmessage = null; ws.onopen = null; ws.close(); }
+      catch (e) { /* ignore */ }
+      ws = null;
+    }
+    stopPing();
+
+    manualClose = false;
+    setConn("connecting");
+    try {
+      ws = new WebSocket(wsUrl(token));
+    } catch (e) {
+      logLine("err", "connect failed: " + (e && e.message ? e.message : e));
+      scheduleReconnect();
+      return;
+    }
+
+    ws.onopen = function () {
+      reconnectDelay = RECONNECT_MIN;
+      setConn("connected");
+      logLine("info", "connected to backend");
+      startPing();
+    };
+    ws.onmessage = function (ev) { handleMessage(ev.data); };
+    ws.onerror = function () { /* onclose follows; surface only there */ };
+    ws.onclose = function (ev) {
+      stopPing();
+      if (manualClose) { setConn("disconnected", "disconnected"); return; }
+      // 1008 (policy) from the server most likely means a bad token.
+      if (ev && ev.code === 1008) {
+        setConn("disconnected", "auth rejected");
+        toast("Connection rejected \u2014 check your token.");
+        return; // do not hammer with a bad token
+      }
+      setConn("disconnected", "connection lost");
+      scheduleReconnect();
+    };
+  }
+
+  function send(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify(msg)); return true; }
+      catch (e) { toast("Send failed: " + (e && e.message ? e.message : e)); return false; }
+    }
+    toast("Not connected \u2014 tap Connect first.");
+    return false;
+  }
+
+  function startPing() {
+    stopPing();
+    pingTimer = setInterval(function () {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: "ping" })); } catch (e) { /* ignore */ }
+      }
+    }, PING_MS);
+  }
+  function stopPing() { if (pingTimer) { clearInterval(pingTimer); pingTimer = null; } }
+
+  // ================= Incoming messages =================
+  function handleMessage(raw) {
+    var msg;
+    try { msg = JSON.parse(raw); } catch (e) { return; }
+    if (!msg || typeof msg.type !== "string") return;
+
+    switch (msg.type) {
+      case "transcript":
+        logLine("info", "heard: \u201c" + String(msg.text == null ? "" : msg.text) + "\u201d");
+        break;
+
+      case "parsed":
+        logParsed(msg);
+        break;
+
+      case "tello":
+        logTello(msg);
+        break;
+
+      case "status":
+        updateStatus(msg);
+        break;
+
+      case "error":
+        logLine("err", "error: " + String(msg.message == null ? "" : msg.message));
+        toast(String(msg.message == null ? "error" : msg.message));
+        break;
+
+      case "pong":
+        break; // liveness only
+
+      default:
+        break;
+    }
+  }
+
+  function updateStatus(msg) {
+    var online = !!msg.deviceOnline;
+    devDot.className = "dot " + (online ? "on" : "off");
+    devText.textContent = online ? "drone online" : "drone offline";
+    if (typeof msg.battery === "number") {
+      battText.textContent = msg.battery + "%";
+    } else {
+      battText.textContent = "\u2014";
+    }
+  }
+
+  function logParsed(msg) {
+    var raw = msg.raw == null ? "" : String(msg.raw);
+    var cmd = fmtCmd(msg.command);
+    logLine("parse", "parsed: " + esc(raw) + "  \u2192  <span class=\"cmd\">" + esc(cmd) + "</span>", true);
+  }
+
+  function logTello(msg) {
+    var cmd = fmtCmd(msg.command);
+    var resp = msg.response == null ? "" : String(msg.response);
+    var cls = msg.ok ? "ok" : "fail";
+    var mark = msg.ok ? "\u2713" : "\u2717";
+    logLine(cls, mark + " " + cmd + " \u2192 " + resp);
+  }
+
+  // ================= Outgoing commands =================
+  function sendCommand(command) {
+    if (send({ type: "command", command: command })) {
+      logLine("sent", "\u2192 " + fmtCmd(command));
+    }
+  }
+
+  function fmtCmd(c) {
+    if (!c || typeof c.action !== "string") return "?";
+    var s = c.action;
+    if (typeof c.distance === "number") s += " " + c.distance + "cm";
+    if (typeof c.degree === "number") s += " " + c.degree + "\u00b0";
+    if (c.dir) s += " " + c.dir;
+    return s;
+  }
+
+  function clampInt(v, min, max, def) {
+    var n = parseInt(v, 10);
+    if (isNaN(n)) n = def;
+    if (n < min) n = min;
+    if (n > max) n = max;
+    return n;
+  }
+
+  function currentDistance() {
+    var n = clampInt(distNum.value, DIST_MIN, DIST_MAX, 50);
+    distNum.value = n; distRange.value = n;
+    return n;
+  }
+  function currentDegree() {
+    var n = clampInt(degNum.value, DEG_MIN, DEG_MAX, 90);
+    degNum.value = n; degRange.value = n;
+    return n;
+  }
+
+  // ================= Mic / MediaRecorder =================
+  var micStream = null;
+  var recorder = null;
+  var chunks = [];
+  var recState = "idle"; // idle | starting | recording | stopping
+
+  function micSupported() {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && typeof window.MediaRecorder !== "undefined");
+  }
+
+  function setMicUI() {
+    micBtn.classList.remove("recording", "starting");
+    if (recState === "recording") {
+      micBtn.classList.add("recording");
+      micLabel.textContent = "\u25cf Recording\u2026";
+      micSub.textContent = "release to send";
+    } else if (recState === "starting" || recState === "stopping") {
+      micBtn.classList.add("starting");
+      micLabel.textContent = recState === "starting" ? "\u2026 Starting" : "\u2026 Sending";
+      micSub.textContent = "";
+    } else {
+      micLabel.textContent = "\uD83C\uDFA4 Hold to Talk";
+      micSub.textContent = "press & hold, release to send";
+    }
+  }
+
+  function ensureStream() {
+    if (micStream) return Promise.resolve(micStream);
+    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      micStream = s;
+      return s;
+    });
+  }
+
+  function startRecording() {
+    if (recState !== "idle") return;
+    if (!micSupported()) {
+      toast("Microphone not available. Use HTTPS and a supported browser.");
+      logLine("err", "getUserMedia/MediaRecorder unsupported (insecure context?)");
+      return;
+    }
+    recState = "starting";
+    setMicUI();
+
+    ensureStream().then(function (stream) {
+      // Released before the mic came up? Abort cleanly.
+      if (recState !== "starting") { recState = "idle"; setMicUI(); return; }
+
+      chunks = [];
+      try {
+        recorder = new MediaRecorder(stream);
+      } catch (e1) {
+        recState = "idle"; setMicUI();
+        toast("Recording not supported on this browser.");
+        logLine("err", "MediaRecorder init failed: " + (e1 && e1.message ? e1.message : e1));
+        return;
+      }
+
+      recorder.ondataavailable = function (ev) {
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      };
+      recorder.onstop = function () {
+        var type = recorder.mimeType || (chunks[0] && chunks[0].type) || "audio/webm";
+        var blob = new Blob(chunks, { type: type });
+        chunks = [];
+        recState = "idle";
+        setMicUI();
+        if (blob.size === 0) { toast("Nothing recorded \u2014 hold a bit longer."); return; }
+        sendAudioBlob(blob);
+      };
+      recorder.onerror = function (ev) {
+        recState = "idle"; setMicUI();
+        var m = ev && ev.error && ev.error.message ? ev.error.message : "recorder error";
+        toast("Recording error: " + m);
+        logLine("err", "recorder error: " + m);
+      };
+
+      try {
+        recorder.start();
+        recState = "recording";
+        setMicUI();
+      } catch (e) {
+        recState = "idle"; setMicUI();
+        toast("Could not start recording: " + (e && e.message ? e.message : e));
+      }
+    }).catch(function (err) {
+      recState = "idle";
+      setMicUI();
+      var name = err && err.name ? err.name : "";
+      var msg;
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        msg = "Microphone permission denied. Allow mic access (HTTPS required).";
+      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        msg = "No microphone found on this device.";
+      } else {
+        msg = "Microphone unavailable: " + (err && err.message ? err.message : name || err) +
+              ". A secure (HTTPS) context and mic permission are required.";
+      }
+      toast(msg);
+      logLine("err", msg);
+    });
+  }
+
+  function stopRecording() {
+    if (recState === "starting") {
+      // Released before the stream came up — cancel.
+      recState = "idle";
+      setMicUI();
+      return;
+    }
+    if (recState === "recording" && recorder && recorder.state !== "inactive") {
+      recState = "stopping";
+      setMicUI();
+      try { recorder.stop(); } catch (e) { recState = "idle"; setMicUI(); }
+    }
+  }
+
+  function sendAudioBlob(blob) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var result = reader.result || "";
+      var comma = String(result).indexOf(",");
+      var b64 = comma >= 0 ? String(result).slice(comma + 1) : String(result);
+      var mime = blob.type || (recorder && recorder.mimeType) || "audio/webm";
+      if (send({ type: "audio", mime: mime, audio: b64 })) {
+        logLine("sent", "\uD83C\uDFA4 sent audio (" + mime + ", " + Math.round(blob.size / 1024) + " KB)");
+      }
+    };
+    reader.onerror = function () {
+      toast("Failed to read recording.");
+      logLine("err", "FileReader error");
+    };
+    reader.readAsDataURL(blob);
+  }
+
+  // ================= Log & toast =================
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function logLine(cls, text, isHtml) {
+    var atBottom = (logEl.scrollTop + logEl.clientHeight) >= (logEl.scrollHeight - 24);
+    var div = document.createElement("div");
+    div.className = "logline " + cls;
+    var ts = new Date();
+    var hh = ("0" + ts.getHours()).slice(-2);
+    var mm = ("0" + ts.getMinutes()).slice(-2);
+    var ss = ("0" + ts.getSeconds()).slice(-2);
+    var stamp = "<span class=\"t\">" + hh + ":" + mm + ":" + ss + "</span> ";
+    div.innerHTML = stamp + (isHtml ? text : esc(text));
+    logEl.appendChild(div);
+    // Cap history.
+    while (logEl.childNodes.length > 200) logEl.removeChild(logEl.firstChild);
+    if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function toast(message, kind) {
+    var item = document.createElement("div");
+    item.className = "toast-item" + (kind === "info" ? " info" : "");
+    item.textContent = message;
+    toastEl.appendChild(item);
+    // force reflow so the transition runs
+    void item.offsetWidth;
+    item.classList.add("show");
+    setTimeout(function () {
+      item.classList.remove("show");
+      setTimeout(function () { if (item.parentNode) item.parentNode.removeChild(item); }, 250);
+    }, 4200);
+  }
+
+  // ================= Wire up UI =================
+
+  // Emergency LAND — immediate, distinct from normal land.
+  $("emergencyBtn").addEventListener("click", function () {
+    sendCommand({ action: "land" });
+    logLine("err", "EMERGENCY LAND sent");
+  });
+
+  // Connection
+  connectBtn.addEventListener("click", function () {
+    reconnectDelay = RECONNECT_MIN;
+    connect();
+  });
+  tokenInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { reconnectDelay = RECONNECT_MIN; connect(); }
+  });
+
+  // Basic commands
+  $("btnTakeoff").addEventListener("click", function () { sendCommand({ action: "takeoff" }); });
+  $("btnLand").addEventListener("click", function () { sendCommand({ action: "land" }); });
+  $("btnBattery").addEventListener("click", function () { sendCommand({ action: "battery" }); });
+
+  // Directional moves
+  var moveButtons = document.querySelectorAll("[data-move]");
+  for (var i = 0; i < moveButtons.length; i++) {
+    (function (btn) {
+      btn.addEventListener("click", function () {
+        var action = btn.getAttribute("data-move");
+        sendCommand({ action: action, distance: currentDistance() });
+      });
+    })(moveButtons[i]);
+  }
+
+  // Rotation
+  var rotButtons = document.querySelectorAll("[data-rot]");
+  for (var j = 0; j < rotButtons.length; j++) {
+    (function (btn) {
+      btn.addEventListener("click", function () {
+        var action = btn.getAttribute("data-rot");
+        sendCommand({ action: action, degree: currentDegree() });
+      });
+    })(rotButtons[j]);
+  }
+
+  // Keep number/range selectors in sync.
+  function syncPair(numEl, rangeEl, min, max) {
+    numEl.addEventListener("input", function () { rangeEl.value = numEl.value; });
+    numEl.addEventListener("change", function () {
+      var n = clampInt(numEl.value, min, max, numEl === distNum ? 50 : 90);
+      numEl.value = n; rangeEl.value = n;
+    });
+    rangeEl.addEventListener("input", function () { numEl.value = rangeEl.value; });
+  }
+  syncPair(distNum, distRange, DIST_MIN, DIST_MAX);
+  syncPair(degNum, degRange, DEG_MIN, DEG_MAX);
+
+  // Push-to-talk (pointer events cover mouse + touch + pen).
+  micBtn.addEventListener("pointerdown", function (e) {
+    e.preventDefault();
+    try { micBtn.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    startRecording();
+  });
+  micBtn.addEventListener("pointerup", function (e) {
+    e.preventDefault();
+    stopRecording();
+  });
+  micBtn.addEventListener("pointercancel", function () { stopRecording(); });
+  // Safety: if pointer leaves without capture (older engines), stop.
+  micBtn.addEventListener("pointerleave", function () {
+    if (recState === "recording" || recState === "starting") stopRecording();
+  });
+  // Block context menu on long-press.
+  micBtn.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+  if (!micSupported()) {
+    micBtn.disabled = true;
+    micLabel.textContent = "\uD83C\uDFA4 Mic unavailable";
+    micSub.textContent = "needs HTTPS + mic permission";
+    logLine("err", "Microphone API unavailable (insecure context or unsupported browser).");
+  }
+
+  // ================= Boot =================
+  setMicUI();
+  logLine("info", "ready. " + (window.location.protocol === "https:" ? "secure context" : "INSECURE context \u2014 mic may be blocked"));
+
+  var urlToken = tokenFromUrl();
+  if (urlToken) {
+    tokenInput.value = urlToken;
+    connect();
+  } else {
+    setConn("disconnected", "enter token + Connect");
+    tokenInput.focus();
+  }
+
+  // Reconnect promptly when the tab regains focus / network returns.
+  window.addEventListener("online", function () {
+    if (!ws || ws.readyState === WebSocket.CLOSED) { reconnectDelay = RECONNECT_MIN; connect(); }
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" &&
+        (!ws || ws.readyState === WebSocket.CLOSED) && currentToken()) {
+      reconnectDelay = RECONNECT_MIN;
+      connect();
+    }
+  });
+})();
+</script>
+</body>
+</html>

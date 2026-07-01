@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.local
+bun.lockb
+# firmware secrets + build
+firmware/src/config.h
+firmware/.pio/
