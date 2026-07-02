@@ -191,6 +191,23 @@
     } catch (e) { return ""; }
   }
 
+  // Persist the browser token in a cookie so it auto-loads next visit.
+  var TOKEN_COOKIE = "tv_token";
+  function saveToken(t) {
+    try {
+      var secure = window.location.protocol === "https:" ? "; Secure" : "";
+      // 1 year; Lax so it rides same-site navigations.
+      document.cookie = TOKEN_COOKIE + "=" + encodeURIComponent(t) +
+        "; Max-Age=31536000; Path=/; SameSite=Lax" + secure;
+    } catch (e) { /* ignore */ }
+  }
+  function loadTokenCookie() {
+    try {
+      var m = document.cookie.match(/(?:^|;\s*)tv_token=([^;]*)/);
+      return m ? decodeURIComponent(m[1]).trim() : "";
+    } catch (e) { return ""; }
+  }
+
   function currentToken() { return tokenInput.value.trim(); }
 
   function wsUrl(token) {
@@ -254,6 +271,7 @@
       reconnectDelay = RECONNECT_MIN;
       setConn("connected");
       logLine("info", "백엔드에 연결됨");
+      saveToken(currentToken()); // remember a working token for next visit
       startPing();
     };
     ws.onmessage = function (ev) { handleMessage(ev.data); };
@@ -649,9 +667,10 @@
   setMicUI();
   logLine("info", "준비됨. " + (window.location.protocol === "https:" ? "보안 컨텍스트" : "비보안 컨텍스트 \u2014 마이크가 차단될 수 있음"));
 
-  var urlToken = tokenFromUrl();
-  if (urlToken) {
-    tokenInput.value = urlToken;
+  // Token priority: URL ?token= (explicit) > saved cookie (auto-load).
+  var bootToken = tokenFromUrl() || loadTokenCookie();
+  if (bootToken) {
+    tokenInput.value = bootToken;
     connect();
   } else {
     setConn("disconnected", "토큰 입력");
