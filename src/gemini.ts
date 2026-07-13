@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, FunctionCallingConfigMode } from "@google/genai";
+import { GoogleGenAI, Type, FunctionCallingConfigMode, ThinkingLevel } from "@google/genai";
 import { config } from "./config.ts";
 import type { DroneCommand, DroneAction } from "./protocol.ts";
 
@@ -105,7 +105,10 @@ export interface ParseResult {
  */
 export async function parseAudioCommand(audioBase64: string, mime: string): Promise<ParseResult> {
   const t0 = Date.now();
-  console.log(`[gemini] request model=${config.geminiModel} mime=${mime} audioB64=${audioBase64.length}B`);
+  // Gemini wants a bare audio mime; strip any "; codecs=..." parameter that
+  // browsers (esp. iOS Safari -> "audio/mp4; codecs=mp4a.40.2") tack on.
+  const cleanMime = (mime.split(";")[0] || "").trim() || "audio/mp4";
+  console.log(`[gemini] request model=${config.geminiModel} mime=${cleanMime} audioB64=${audioBase64.length}B`);
   const res = await withTimeout(withRetry(() => getClient().models.generateContent({
     model: config.geminiModel,
     contents: [
@@ -113,7 +116,7 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
         role: "user",
         parts: [
           { text: "Here is the spoken instruction. Produce one control_drone call." },
-          { inlineData: { mimeType: mime, data: audioBase64 } },
+          { inlineData: { mimeType: cleanMime, data: audioBase64 } },
         ],
       },
     ],
@@ -124,8 +127,11 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
         functionCallingConfig: { mode: FunctionCallingConfigMode.ANY, allowedFunctionNames: ["control_drone"] },
       },
       temperature: 0,
+      // Minimize model "thinking" — this is a deterministic command map, not a
+      // reasoning task. Cuts latency sharply on 3.x Flash (which thinks by default).
+      thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
     },
-  })), 15000, "gemini");
+  }), 3, 400), 20000, "gemini");
   console.log(`[gemini] response in ${Date.now() - t0}ms, calls=${(res.functionCalls ?? []).length}`);
 
   const calls = res.functionCalls ?? [];
@@ -145,6 +151,26 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
   }
 
   return { command, raw: describe(command) };
+}
+
+/** Text-only connectivity probe: proves the container can reach Gemini and the
+ * key/model work, isolating network/model issues from audio-specific ones. */
+export async function pingText(): Promise<{ ok: boolean; ms: number; text?: string; error?: string }> {
+  const t0 = Date.now();
+  try {
+    const res = await withTimeout(
+      getClient().models.generateContent({
+        model: config.geminiModel,
+        contents: [{ role: "user", parts: [{ text: "Reply with the single word: ok" }] }],
+        config: { temperature: 0, thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } },
+      }),
+      12000,
+      "gemini-ping",
+    );
+    return { ok: true, ms: Date.now() - t0, text: (res.text ?? "").slice(0, 40) };
+  } catch (e) {
+    return { ok: false, ms: Date.now() - t0, error: (e as Error).message };
+  }
 }
 
 /** Compact human description for UI echo. */

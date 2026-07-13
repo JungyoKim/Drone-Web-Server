@@ -1,7 +1,7 @@
 import type { ServerWebSocket } from "bun";
 import { config } from "./config.ts";
 import { mapCommand, parseTelloReply } from "./tello.ts";
-import { parseAudioCommand } from "./gemini.ts";
+import { parseAudioCommand, pingText } from "./gemini.ts";
 import type {
   BrowserToServer,
   ServerToBrowser,
@@ -208,6 +208,14 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname === "/health") {
       return Response.json({ ok: true, deviceOnline: deviceAuthed, battery: lastBattery });
+    }
+
+    // Voice connectivity probe: text-only Gemini ping to isolate network/model
+    // issues from audio. Visit /selftest in a browser to see the result.
+    if (url.pathname === "/selftest") {
+      if (!config.geminiApiKey) return Response.json({ ok: false, error: "GEMINI_API_KEY not set" });
+      const r = await pingText();
+      return Response.json({ model: config.geminiModel, ...r });
     }
 
     // Static web app.
