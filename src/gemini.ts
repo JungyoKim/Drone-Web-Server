@@ -22,7 +22,7 @@ export async function withRetry<T>(fn: () => Promise<T>, attempts = 3, baseDelay
     } catch (e) {
       lastErr = e;
       const msg = e instanceof Error ? e.message : String(e);
-      const transient = /\b429\b|RESOURCE_EXHAUSTED|\b5\d\d\b|UNAVAILABLE|overloaded/i.test(msg);
+      const transient = /\b429\b|RESOURCE_EXHAUSTED|\b5\d\d\b|UNAVAILABLE|overloaded|timed out|timeout|aborted/i.test(msg);
       if (!transient || i === attempts - 1) throw e;
       await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** i));
     }
@@ -109,7 +109,11 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
   // browsers (esp. iOS Safari -> "audio/mp4; codecs=mp4a.40.2") tack on.
   const cleanMime = (mime.split(";")[0] || "").trim() || "audio/mp4";
   console.log(`[gemini] request model=${config.geminiModel} mime=${cleanMime} audioB64=${audioBase64.length}B`);
-  const res = await withTimeout(withRetry(() => getClient().models.generateContent({
+  // Per-attempt timeout INSIDE the retry: when the model is overloaded an audio
+  // request tends to hang (rather than return a fast 503). Capping each attempt
+  // turns that hang into a retryable "timed out", so we retry (with backoff)
+  // instead of blocking the whole budget on one stuck call.
+  const res = await withRetry(() => withTimeout(getClient().models.generateContent({
     model: config.geminiModel,
     contents: [
       {
@@ -131,7 +135,7 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
       // reasoning task. Cuts latency sharply on 3.x Flash (which thinks by default).
       thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
     },
-  }), 3, 400), 20000, "gemini");
+  }), 8000, "gemini"), 3, 500);
   console.log(`[gemini] response in ${Date.now() - t0}ms, calls=${(res.functionCalls ?? []).length}`);
 
   const calls = res.functionCalls ?? [];
