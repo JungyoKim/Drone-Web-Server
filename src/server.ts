@@ -210,12 +210,34 @@ const server = Bun.serve<SocketData>({
       return Response.json({ ok: true, deviceOnline: deviceAuthed, battery: lastBattery });
     }
 
-    // Voice connectivity probe: text-only Gemini ping to isolate network/model
-    // issues from audio. Visit /selftest in a browser to see the result.
+    // Voice connectivity probe. Raw fetches pinpoint the failing layer:
+    // general egress, DNS/reachability to Google, then the actual Gemini call.
     if (url.pathname === "/selftest") {
-      if (!config.geminiApiKey) return Response.json({ ok: false, error: "GEMINI_API_KEY not set" });
-      const r = await pingText();
-      return Response.json({ model: config.geminiModel, ...r });
+      async function probe(label: string, target: string, ms: number) {
+        const t0 = Date.now();
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), ms);
+        try {
+          const r = await fetch(target, { signal: ac.signal });
+          return { label, ok: true, status: r.status, ms: Date.now() - t0 };
+        } catch (e) {
+          return { label, ok: false, error: (e as Error).message, ms: Date.now() - t0 };
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      const key = config.geminiApiKey;
+      const results = {
+        internet: await probe("internet", "https://www.gstatic.com/generate_204", 8000),
+        geminiReST: await probe(
+          "gemini-rest",
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${key || "none"}`,
+          10000,
+        ),
+        geminiSDK: key ? await pingText() : { ok: false, error: "GEMINI_API_KEY not set" },
+        model: config.geminiModel,
+      };
+      return Response.json(results);
     }
 
     // Static web app.
