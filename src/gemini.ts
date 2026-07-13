@@ -30,6 +30,18 @@ export async function withRetry<T>(fn: () => Promise<T>, attempts = 3, baseDelay
   throw lastErr;
 }
 
+/** Reject if `p` doesn't settle within `ms` — turns a silent network hang into
+ * a visible error the UI can show. */
+export function withTimeout<T>(p: Promise<T>, ms: number, label = "gemini"): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 /**
  * Single function declaration the model maps speech onto. One function with an
  * `action` enum keeps the tool surface tiny and the parse unambiguous — the model
@@ -92,7 +104,9 @@ export interface ParseResult {
  * function calling. Throws on no/invalid function call so the caller surfaces an error.
  */
 export async function parseAudioCommand(audioBase64: string, mime: string): Promise<ParseResult> {
-  const res = await withRetry(() => getClient().models.generateContent({
+  const t0 = Date.now();
+  console.log(`[gemini] request model=${config.geminiModel} mime=${mime} audioB64=${audioBase64.length}B`);
+  const res = await withTimeout(withRetry(() => getClient().models.generateContent({
     model: config.geminiModel,
     contents: [
       {
@@ -111,7 +125,8 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
       },
       temperature: 0,
     },
-  }));
+  })), 15000, "gemini");
+  console.log(`[gemini] response in ${Date.now() - t0}ms, calls=${(res.functionCalls ?? []).length}`);
 
   const calls = res.functionCalls ?? [];
   const call = calls[0];

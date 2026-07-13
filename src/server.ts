@@ -108,12 +108,14 @@ async function onBrowserMessage(ws: Socket, raw: string): Promise<void> {
         sendBrowser(ws, { type: "error", message: "voice disabled: GEMINI_API_KEY not set" });
         return;
       }
+      console.log(`[audio] received mime=${msg.mime} bytes=${msg.audio?.length ?? 0}`);
       try {
         const { command, raw: desc } = await parseAudioCommand(msg.audio, msg.mime);
         sendBrowser(ws, { type: "parsed", command, raw: desc });
         const err = dispatch(command, ws);
         if (err) sendBrowser(ws, { type: "error", message: err });
       } catch (e) {
+        console.error(`[audio] parse failed:`, e);
         sendBrowser(ws, { type: "error", message: `parse failed: ${(e as Error).message}` });
       }
       return;
