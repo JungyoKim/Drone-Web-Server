@@ -10,6 +10,27 @@ function getClient(): GoogleGenAI {
 }
 
 /**
+ * Retry transient failures (429 rate-limit, 5xx) with exponential backoff.
+ * The free tier returns 429 RESOURCE_EXHAUSTED under load; a couple of short
+ * retries usually clears it. Non-transient errors (bad key, 400) rethrow at once.
+ */
+export async function withRetry<T>(fn: () => Promise<T>, attempts = 3, baseDelayMs = 400): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      const transient = /\b429\b|RESOURCE_EXHAUSTED|\b5\d\d\b|UNAVAILABLE|overloaded/i.test(msg);
+      if (!transient || i === attempts - 1) throw e;
+      await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** i));
+    }
+  }
+  throw lastErr;
+}
+
+/**
  * Single function declaration the model maps speech onto. One function with an
  * `action` enum keeps the tool surface tiny and the parse unambiguous — the model
  * picks the action and fills only the relevant arg.
@@ -71,7 +92,7 @@ export interface ParseResult {
  * function calling. Throws on no/invalid function call so the caller surfaces an error.
  */
 export async function parseAudioCommand(audioBase64: string, mime: string): Promise<ParseResult> {
-  const res = await getClient().models.generateContent({
+  const res = await withRetry(() => getClient().models.generateContent({
     model: config.geminiModel,
     contents: [
       {
@@ -90,7 +111,7 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
       },
       temperature: 0,
     },
-  });
+  }));
 
   const calls = res.functionCalls ?? [];
   const call = calls[0];

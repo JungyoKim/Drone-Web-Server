@@ -3,7 +3,7 @@ export const config = {
   port: Number(Bun.env.PORT ?? 8080),
   /** Gemini API key. Required for voice; plumbing/tests run without it. */
   geminiApiKey: Bun.env.GEMINI_API_KEY ?? "",
-  geminiModel: Bun.env.GEMINI_MODEL ?? "gemini-2.5-flash",
+  geminiModel: Bun.env.GEMINI_MODEL ?? "gemini-flash-latest",
   /** Shared secret the ESP32 presents in its hello frame. */
   deviceToken: Bun.env.DEVICE_TOKEN ?? "dev-device-token",
   /** Bearer token the browser must present (?token=) to open /ws/browser. */
