@@ -79,6 +79,10 @@ const droneTool = {
             enum: ["l", "r", "f", "b"],
             description: "Flip direction: l=left, r=right, f=forward, b=back.",
           },
+          heard: {
+            type: Type.STRING,
+            description: "Verbatim transcription of the Korean/English words you actually heard in the audio.",
+          },
         },
         required: ["action"],
       },
@@ -89,14 +93,18 @@ const droneTool = {
 const SYSTEM_INSTRUCTION = `You translate a Korean (or English) spoken drone instruction into exactly one control_drone function call.
 Rules:
 - Always call control_drone exactly once. Never answer in text.
-- Map natural language to actions: 이륙/뜨다=takeoff, 착륙/내려=land, 정지/비상=emergency, 앞으로=forward, 뒤로=back, 위로=up, 아래로=down, 왼쪽=left, 오른쪽=right, 시계방향/우회전=cw, 반시계/좌회전=ccw, 뒤집기/플립=flip, 배터리=battery.
+- Map natural language to actions: 이륙/뜨다/떠/날아=takeoff, 착륙/내려/내려와/랜딩/착지=land, 정지/비상/멈춰=emergency, 앞으로=forward, 뒤로=back, 위로=up, 아래로=down, 왼쪽=left, 오른쪽=right, 시계방향/우회전=cw, 반시계/좌회전=ccw, 뒤집기/플립=flip, 배터리=battery.
+- CRITICAL: 이륙(takeoff, go UP) and 착륙(land, go DOWN) are OPPOSITES and sound similar (both end in 륙). Attend to the FIRST syllable: 이=takeoff, 착=land. When unsure between these two, prefer 착륙=land (the safer action) only if the first syllable clearly sounds like 착/차; otherwise takeoff.
+- Also put what you heard, verbatim, in the "heard" argument.
 - Convert units to the required ones: meters->centimeters (1미터=100). If a movement distance is unspecified, use 50. If a rotation degree is unspecified, use 90.
 - Clamp intent to valid ranges: distance 20-500cm, degree 1-360. If the user asks beyond a range, pick the nearest valid value.`;
 
 export interface ParseResult {
   command: DroneCommand;
-  /** Human-readable transcript/echo of what was understood, for the UI. */
+  /** Human-readable echo of the interpreted command, for the UI. */
   raw: string;
+  /** Verbatim transcription the model reported hearing, for the UI. */
+  heard?: string;
 }
 
 /**
@@ -154,7 +162,8 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
     command.dir = args["dir"];
   }
 
-  return { command, raw: describe(command) };
+  const heard = typeof args["heard"] === "string" ? (args["heard"] as string) : undefined;
+  return { command, raw: describe(command), heard };
 }
 
 /** Text-only connectivity probe: proves the container can reach Gemini and the
