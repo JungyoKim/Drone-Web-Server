@@ -100,9 +100,8 @@ Rules:
 - Clamp intent to valid ranges: distance 20-500cm, degree 1-360. If the user asks beyond a range, pick the nearest valid value.`;
 
 export interface ParseResult {
-  command: DroneCommand;
-  /** Human-readable echo of the interpreted command, for the UI. */
-  raw: string;
+  /** One or more commands, in spoken order (multi-command supported). */
+  commands: DroneCommand[];
   /** Verbatim transcription the model reported hearing, for the UI. */
   heard?: string;
 }
@@ -147,23 +146,26 @@ export async function parseAudioCommand(audioBase64: string, mime: string): Prom
   console.log(`[gemini] response in ${Date.now() - t0}ms, calls=${(res.functionCalls ?? []).length}`);
 
   const calls = res.functionCalls ?? [];
-  const call = calls[0];
-  if (!call || call.name !== "control_drone" || !call.args) {
-    throw new Error("model did not return a control_drone call");
+  const MAX_COMMANDS = 5; // safety: cap how many actions one utterance can queue
+  const commands: DroneCommand[] = [];
+  let heard: string | undefined;
+  for (const call of calls) {
+    if (call.name !== "control_drone" || !call.args) continue;
+    const args = call.args as Record<string, unknown>;
+    if (heard === undefined && typeof args["heard"] === "string") heard = args["heard"] as string;
+    const action = args["action"] as DroneAction | undefined;
+    if (!action) continue;
+    const command: DroneCommand = { action };
+    if (typeof args["distance"] === "number") command.distance = args["distance"];
+    if (typeof args["degree"] === "number") command.degree = args["degree"];
+    if (args["dir"] === "l" || args["dir"] === "r" || args["dir"] === "f" || args["dir"] === "b") {
+      command.dir = args["dir"];
+    }
+    commands.push(command);
+    if (commands.length >= MAX_COMMANDS) break;
   }
-  const args = call.args as Record<string, unknown>;
-  const action = args["action"] as DroneAction | undefined;
-  if (!action) throw new Error("control_drone call missing action");
-
-  const command: DroneCommand = { action };
-  if (typeof args["distance"] === "number") command.distance = args["distance"];
-  if (typeof args["degree"] === "number") command.degree = args["degree"];
-  if (args["dir"] === "l" || args["dir"] === "r" || args["dir"] === "f" || args["dir"] === "b") {
-    command.dir = args["dir"];
-  }
-
-  const heard = typeof args["heard"] === "string" ? (args["heard"] as string) : undefined;
-  return { command, raw: describe(command), heard };
+  if (commands.length === 0) throw new Error("model did not return a control_drone call");
+  return { commands, heard };
 }
 
 /** Text-only connectivity probe: proves the container can reach Gemini and the
@@ -187,7 +189,7 @@ export async function pingText(): Promise<{ ok: boolean; ms: number; text?: stri
 }
 
 /** Compact human description for UI echo. */
-function describe(c: DroneCommand): string {
+export function describeCommand(c: DroneCommand): string {
   switch (c.action) {
     case "up": case "down": case "left": case "right": case "forward": case "back":
       return `${c.action} ${c.distance ?? "?"}cm`;

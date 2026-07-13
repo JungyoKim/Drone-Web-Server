@@ -1,7 +1,7 @@
 import type { ServerWebSocket } from "bun";
 import { config } from "./config.ts";
 import { mapCommand, parseTelloReply } from "./tello.ts";
-import { parseAudioCommand, pingText } from "./gemini.ts";
+import { parseAudioCommand, pingText, describeCommand } from "./gemini.ts";
 import type {
   BrowserToServer,
   ServerToBrowser,
@@ -26,6 +26,8 @@ interface PendingCommand {
   /** Browser that should receive the relayed reply (may be gone by reply time). */
   origin: Socket | null;
   timer: ReturnType<typeof setTimeout>;
+  /** Resolves when the Tello reply (or timeout) settles, for sequential runs. */
+  resolve: (r: { ok: boolean; response: string }) => void;
 }
 
 // ---------- Registries ----------
@@ -38,6 +40,13 @@ let lastBattery: number | null = null;
 
 const pending = new Map<number, PendingCommand>();
 let nextCommandId = 1;
+
+/** Active multi-command sequence (if any). Emergency / new input aborts it so
+ * queued commands stop firing. */
+let currentSeq: { aborted: boolean } | null = null;
+function abortSequence(): void {
+  if (currentSeq) { currentSeq.aborted = true; currentSeq = null; }
+}
 
 // ---------- Send helpers (typed) ----------
 
@@ -57,28 +66,66 @@ function broadcastStatus(): void {
 
 // ---------- Command dispatch ----------
 
+type DispatchResult = { ok: boolean; response: string };
+
 /**
  * Validate a structured command, push it to the device, and register a pending
  * reply so the eventual Tello response is relayed back to `origin`.
- * Returns an error string if validation failed (nothing dispatched).
+ * Returns `{ error }` if validation failed (nothing dispatched), else `{ done }`
+ * — a promise that resolves when the Tello reply (or timeout) settles, so a
+ * multi-command sequence can wait for each step before sending the next.
  */
-function dispatch(command: DroneCommand, origin: Socket | null): string | null {
+function dispatch(command: DroneCommand, origin: Socket | null): { error: string } | { done: Promise<DispatchResult> } {
   const mapped = mapCommand(command);
-  if (!mapped.ok) return mapped.error;
+  if (!mapped.ok) return { error: mapped.error };
 
-  if (!device || !deviceAuthed) return "device offline";
+  if (!device || !deviceAuthed) return { error: "device offline" };
 
   const id = nextCommandId++;
+  let resolve!: (r: DispatchResult) => void;
+  const done = new Promise<DispatchResult>((res) => { resolve = res; });
   const timer = setTimeout(() => {
     const p = pending.get(id);
     if (!p) return;
     pending.delete(id);
     if (p.origin) sendBrowser(p.origin, { type: "tello", command: p.command, response: "timeout", ok: false });
+    p.resolve({ ok: false, response: "timeout" });
   }, config.commandTimeoutMs);
 
-  pending.set(id, { command: mapped.command, origin, timer });
+  pending.set(id, { command: mapped.command, origin, timer, resolve });
   sendDevice(device, { type: "command", id, tello: mapped.tello, meta: mapped.command });
-  return null;
+  return { done };
+}
+
+export type SequenceStop = "done" | "aborted" | "failed" | "error";
+
+/**
+ * Run commands strictly in order, one at a time. Safety-critical:
+ * - stops before each step if `seq.aborted` (emergency / new input),
+ * - re-checks abort after each step (abort can land while awaiting a reply),
+ * - stops the rest if a step fails (Tello rejected / timeout) or errors.
+ * `run` dispatches one command and resolves with its outcome; `onStop` reports
+ * why the run ended (for UI). Pure of transport — unit-testable with a fake run.
+ */
+export async function runCommandSequence(
+  commands: DroneCommand[],
+  seq: { aborted: boolean },
+  run: (cmd: DroneCommand, index: number, total: number) => Promise<{ ok: boolean } | { error: string }>,
+  onStop?: (reason: SequenceStop, cmd?: DroneCommand) => void,
+): Promise<{ executed: number; reason: SequenceStop }> {
+  const total = commands.length;
+  let executed = 0;
+  for (let i = 0; i < total; i++) {
+    const cmd = commands[i]!;
+    if (seq.aborted) { onStop?.("aborted", cmd); return { executed, reason: "aborted" }; }
+    const res = await run(cmd, i, total);
+    if ("error" in res) { onStop?.("error", cmd); return { executed, reason: "error" }; }
+    executed++;
+    if (seq.aborted) { onStop?.("aborted", cmd); return { executed, reason: "aborted" }; }
+    if (!res.ok) { onStop?.("failed", cmd); return { executed, reason: "failed" }; }
+  }
+  onStop?.("done");
+  return { executed, reason: "done" };
 }
 
 // ---------- Browser message handling ----------
@@ -98,8 +145,9 @@ async function onBrowserMessage(ws: Socket, raw: string): Promise<void> {
       return;
 
     case "command": {
-      const err = dispatch(msg.command, ws);
-      if (err) sendBrowser(ws, { type: "error", message: err });
+      abortSequence(); // manual input supersedes any running sequence
+      const r = dispatch(msg.command, ws);
+      if ("error" in r) sendBrowser(ws, { type: "error", message: r.error });
       return;
     }
 
@@ -110,11 +158,27 @@ async function onBrowserMessage(ws: Socket, raw: string): Promise<void> {
       }
       console.log(`[audio] received mime=${msg.mime} bytes=${msg.audio?.length ?? 0}`);
       try {
-        const { command, raw: desc, heard } = await parseAudioCommand(msg.audio, msg.mime);
+        const { commands, heard } = await parseAudioCommand(msg.audio, msg.mime);
         if (heard) sendBrowser(ws, { type: "transcript", text: heard });
-        sendBrowser(ws, { type: "parsed", command, raw: desc });
-        const err = dispatch(command, ws);
-        if (err) sendBrowser(ws, { type: "error", message: err });
+        if (commands.length === 0) {
+          sendBrowser(ws, { type: "error", message: "명령을 인식하지 못했습니다" });
+          return;
+        }
+        // Start a fresh sequence, cancelling any previous one still running.
+        abortSequence();
+        const seq = { aborted: false };
+        currentSeq = seq;
+        await runCommandSequence(commands, seq, (cmd, i, total) => {
+          const label = total > 1 ? `[${i + 1}/${total}] ${describeCommand(cmd)}` : describeCommand(cmd);
+          sendBrowser(ws, { type: "parsed", command: cmd, raw: label });
+          const r = dispatch(cmd, ws);
+          if ("error" in r) { sendBrowser(ws, { type: "error", message: r.error }); return Promise.resolve({ error: r.error }); }
+          return r.done;
+        }, (reason, cmd) => {
+          if (reason === "aborted") sendBrowser(ws, { type: "error", message: "시퀀스 취소됨" });
+          else if (reason === "failed" && commands.length > 1) sendBrowser(ws, { type: "error", message: `중단: '${describeCommand(cmd!)}' 실패` });
+        });
+        if (currentSeq === seq) currentSeq = null;
       } catch (e) {
         console.error(`[audio] parse failed:`, e);
         sendBrowser(ws, { type: "error", message: `parse failed: ${(e as Error).message}` });
@@ -160,10 +224,12 @@ function onDeviceMessage(ws: Socket, raw: string): void {
       const parsed = parseTelloReply(msg.response);
       // battery? replies carry the level — cache it.
       if (p.command.action === "battery" && parsed.ok) lastBattery = Number(parsed.value);
+      const ok = msg.ok && parsed.ok;
       if (p.origin) {
-        sendBrowser(p.origin, { type: "tello", command: p.command, response: msg.response, ok: msg.ok && parsed.ok });
+        sendBrowser(p.origin, { type: "tello", command: p.command, response: msg.response, ok });
       }
       if (p.command.action === "battery") broadcastStatus();
+      p.resolve({ ok, response: msg.response }); // unblock a waiting sequence step
       return;
     }
 
@@ -176,7 +242,9 @@ function onDeviceMessage(ws: Socket, raw: string): void {
     }
 
     case "event": {
-      // Surface hardware events (esp. emergency button) to every browser.
+      // Hardware events. Emergency button lands the drone directly over UDP;
+      // also cancel any queued multi-command sequence so nothing else fires.
+      if (msg.event === "emergency_button") abortSequence();
       broadcastBrowsers({ type: "error", message: `device event: ${msg.event}${msg.detail ? ` (${msg.detail})` : ""}` });
       return;
     }
