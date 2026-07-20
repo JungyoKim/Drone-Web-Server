@@ -10,7 +10,6 @@ import {
   PlaneTakeoff,
   PlaneLanding,
   BatteryMedium,
-  TriangleAlert,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -87,24 +86,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
   const degree = useClampedRange(DEG_DEFAULT, DEG_MIN, DEG_MAX);
 
   return (
-    <div className="flex flex-col gap-3.5">
-      {/* Emergency LAND — immediate, distinct from the normal 착륙 button below. */}
-      <Button
-        type="button"
-        isDisabled={disabled}
-        onClick={() => onCommand({ action: "land" })}
-        className="flex h-16 w-full flex-col gap-0.5 whitespace-normal bg-destructive text-xl font-extrabold uppercase tracking-wider text-white hover:bg-destructive/90"
-      >
-        <span className="flex items-center gap-2">
-          <TriangleAlert className="size-6" />
-          비상 착륙
-        </span>
-        <small className="block text-[11px] font-semibold normal-case tracking-normal opacity-85">
-          눌러서 즉시 착륙 · 하드웨어 버튼이 진짜 최후 수단
-        </small>
-      </Button>
-
-      <Card>
+    <Card>
         <CardHeader>
           <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground">
             직접 제어
@@ -302,6 +284,5 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
           </div>
         </CardContent>
       </Card>
-    </div>
   );
 }

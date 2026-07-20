@@ -1,19 +1,12 @@
-import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 
-import ConnectionHeader from "@/components/ConnectionHeader";
+import AppHeader from "@/components/AppHeader";
 import CommandLog from "@/components/CommandLog";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import ManualControls from "@/components/ManualControls";
 import TrackingPanel from "@/components/TrackingPanel";
 import { Toaster } from "@/components/ui/sonner";
-import { cn } from "@/lib/utils";
 import { useDroneSocket } from "@/hooks/useDroneSocket";
-
-const NAV_LINKS = [
-  { to: "/manual", label: "\uc218\ub3d9" },
-  { to: "/voice", label: "\uc74c\uc131" },
-  { to: "/track", label: "\ub9c8\ucee4 \ucd94\uc801" },
-] as const;
 
 export default function App() {
   const ds = useDroneSocket();
@@ -22,7 +15,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <div className="flex h-dvh flex-col bg-background text-foreground">
-        <ConnectionHeader
+        <AppHeader
           connState={ds.state.connState}
           connLabel={ds.state.connLabel}
           deviceOnline={ds.state.deviceOnline}
@@ -30,26 +23,9 @@ export default function App() {
           token={ds.token}
           onTokenChange={ds.setToken}
           onConnect={ds.connect}
+          onEmergencyLand={() => ds.sendCommand({ action: "land" })}
+          emergencyDisabled={controlsDisabled}
         />
-
-        <nav className="flex gap-1 border-b border-border px-2 py-1.5">
-          {NAV_LINKS.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              className={({ isActive }) =>
-                cn(
-                  "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                )
-              }
-            >
-              {link.label}
-            </NavLink>
-          ))}
-        </nav>
 
         <main className="min-h-0 flex-1 overflow-y-auto p-3">
           <Routes>

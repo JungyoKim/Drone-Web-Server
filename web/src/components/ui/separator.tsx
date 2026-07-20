@@ -1,3 +1,5 @@
+"use client"
+
 import { Separator as SeparatorPrimitive } from "react-aria-components"
 
 import { cn } from "@/lib/utils"
