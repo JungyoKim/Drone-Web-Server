@@ -82,12 +82,23 @@ export function patternToCode(pattern: readonly boolean[]): number {
  * every pair of codes in a dictionary, which degenerates to
  * Number.MAX_VALUE (matches anything) for a single-entry codeList like this
  * one, unlike the built-in multi-marker dictionaries.
+ *
+ * CRITICAL landmine in js-aruco2 itself, worked around here: its Dictionary
+ * constructor does `this.tau = dictionary.tau || this._calculateTau()` --
+ * `||` treats an explicit `tau: 0` as falsy, so it falls through to that
+ * SAME Number.MAX_VALUE auto-derivation instead of the strict "exact match
+ * only" the caller almost certainly meant. A tau of 0 would therefore
+ * silently become "match literally anything" -- the opposite of what was
+ * asked, and dangerous for a system that steers a physical drone off of it.
+ * Clamped to a minimum of 1 to guarantee that can never happen; an exact
+ * pixel-perfect match is unaffected either way (js-aruco2's find() checks
+ * for one via a direct lookup BEFORE ever consulting tau).
  */
 export function registerCustomMarker(pattern: readonly boolean[], tau: number): void {
   const code = patternToCode(pattern);
   AR.DICTIONARIES[CUSTOM_MARKER_DICT_NAME] = {
     nBits: CUSTOM_MARKER_BITS,
-    tau,
+    tau: Math.max(1, tau),
     codeList: [code],
   };
 }

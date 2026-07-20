@@ -228,12 +228,19 @@ bookkeeping, the grid you drew *is* the marker.
   something this feature has to handle itself) — verified against the real
   library in `src/tracking.test.ts`, including a full print → (any camera
   rotation) → detect round trip.
-- **`ARUCO_CUSTOM_TAU`** (default 4, out of 16 bits) sets the match
+- **`ARUCO_CUSTOM_TAU`** (default **2**, out of 16 bits) sets the match
   tolerance. Unlike the built-in multi-marker dictionaries, a custom
   single-marker dictionary can't auto-derive a sensible tau from pairwise
-  code distances (there's only one code), so this is explicit — raise it if
-  detection is flaky in poor lighting, lower it if something else in frame is
-  false-triggering.
+  code distances (there's only one code), so this is explicit and kept
+  strict by default — a physical drone steering off a false-positive match
+  on some unrelated bordered object in frame is worse than it occasionally
+  missing its own marker in poor lighting. Raise it if legitimate detection
+  is flaky; **never set it to `0`** expecting "exact match only" — js-
+  aruco2 itself has a `dictionary.tau || this._calculateTau()` bug where an
+  explicit `0` is falsy and silently substitutes `Number.MAX_VALUE` (matches
+  anything) for a single-marker dictionary, so `registerCustomMarker` in
+  `src/tracking.ts` clamps to a minimum of 1 — verified this can't regress
+  in `src/tracking.test.ts`.
 
 ### Confirmed working
 

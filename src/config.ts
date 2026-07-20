@@ -26,11 +26,18 @@ export const config = {
   arucoTargetId: Bun.env.ARUCO_TARGET_ID != null ? Number(Bun.env.ARUCO_TARGET_ID) : undefined,
   /** Max Hamming distance (out of 16 bits) still counted as a match for a
    * web-drawn custom 4x4 marker (see set_marker in protocol.ts). Higher =
-   * more tolerant of camera noise/lighting but more prone to false
-   * positives on an unrelated pattern; there's only one marker in a custom
-   * dictionary, so this can't be auto-derived the way built-in multi-marker
-   * dictionaries derive their tau. */
-  arucoCustomTau: Number(Bun.env.ARUCO_CUSTOM_TAU ?? 4),
+   * more tolerant of camera noise/lighting but more prone to false-
+   * positive matches on unrelated objects in frame -- there's only one
+   * marker in a custom dictionary, so this can't be auto-derived the way
+   * built-in multi-marker dictionaries derive theirs (see the safety-
+   * critical comment on registerCustomMarker in tracking.ts for why 0 is
+   * clamped to 1 rather than meaning "exact match only" as it might seem).
+   * Default kept deliberately strict (2/16 bits ~= 0.2% chance of an
+   * unrelated bordered quadrilateral matching by pure chance, vs ~3.8% at
+   * the previous default of 4) -- a physical drone steering off a false
+   * positive is worse than it occasionally failing to recognize its own
+   * marker under poor lighting. Raise if legitimate detection is flaky. */
+  arucoCustomTau: Number(Bun.env.ARUCO_CUSTOM_TAU ?? 2),
   /** Apparent marker size (px, avg side length) that means "at the right
    * distance" -- bigger => drone thinks it's too close and backs off. Tune
    * empirically for your marker's real-world size + desired follow distance. */

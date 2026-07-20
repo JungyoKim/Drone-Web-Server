@@ -361,6 +361,38 @@ describe("custom marker (patternToCode / registerCustomMarker)", () => {
     expect(dict.find(bits2d)).toBeFalsy();
   });
 
+  test("tau=0 is clamped to 1, never the js-aruco2 `dictionary.tau || _calculateTau()` runaway match-anything bug", async () => {
+    // @ts-expect-error -- untyped module, see tracking.ts's own import
+    const { AR } = await import("js-aruco2");
+    registerCustomMarker(pattern, 0);
+    expect(AR.DICTIONARIES[CUSTOM_MARKER_DICT_NAME]!.tau).toBe(1);
+
+    const dict = new AR.Dictionary(CUSTOM_MARKER_DICT_NAME);
+    // Without the clamp, js-aruco2's `dictionary.tau || this._calculateTau()`
+    // treats tau:0 as falsy and silently substitutes Number.MAX_VALUE for a
+    // single-entry codeList (see registerCustomMarker's doc comment) --
+    // which would make even this maximally-different, fully-inverted
+    // pattern (16/16 bits flipped) register as "found". Confirms it does
+    // NOT, at any rotation.
+    const size = Math.sqrt(CUSTOM_MARKER_BITS);
+    const inverted = pattern.map((b) => !b);
+    let bits2d: number[][] = [];
+    for (let y = 0; y < size; y++) bits2d.push(inverted.slice(y * size, (y + 1) * size).map((b) => (b ? 1 : 0)));
+    function rotate(src: number[][]): number[][] {
+      const len = src.length;
+      const dst: number[][] = [];
+      for (let i = 0; i < len; i++) {
+        dst.push([]);
+        for (let j = 0; j < len; j++) dst[i]!.push(src[len - j - 1]![i]!);
+      }
+      return dst;
+    }
+    for (let r = 0; r < 4; r++) {
+      expect(dict.find(bits2d)).toBeFalsy();
+      bits2d = rotate(bits2d);
+    }
+  });
+
   test("re-registering overwrites the previous pattern (only one active marker)", async () => {
     // @ts-expect-error -- untyped module, see tracking.ts's own import
     const { AR } = await import("js-aruco2");
