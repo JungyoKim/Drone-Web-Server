@@ -5,3 +5,5 @@ node_modules
 firmware
 *.log
 .pio
+web/dist
+web/node_modules/.tmp

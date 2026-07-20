@@ -7,3 +7,6 @@ bun.lockb
 skills-lock.json
 # firmware lives in its own repo (JungyoKim/Drone-Gateway)
 firmware/
+# public/ is now Vite build output (web/ -> `bun run build` -> public/),
+# produced by the Dockerfile's build stage. Not source, not committed.
+public/

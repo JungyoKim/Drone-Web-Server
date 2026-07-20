@@ -36,7 +36,7 @@ graph LR
 | `src/tello.ts` | Command validation + mapping to Tello SDK strings; reply parsing. |
 | `src/tracking.ts` | ArUco detection (video ingest, ffmpeg decode, steering law) for marker-follow. |
 | `src/*.test.ts` | Unit (mapping) + end-to-end plumbing (real subprocess, simulated browser+device). |
-| `public/index.html` | Self-contained mobile web app (mic, controls, emergency LAND, status). |
+| `web/` | **Frontend.** Vite + React 19 + TypeScript + Tailwind v4 + shadcn/ui. See below. |
 | `firmware/` | PlatformIO ESP32-S3 project. See `firmware/README.md`. |
 
 ## Run the backend
@@ -47,9 +47,40 @@ cp .env.example .env      # set GEMINI_API_KEY, DEVICE_TOKEN, BROWSER_TOKEN
 bun run start             # or: bun run dev  (watch mode)
 ```
 
+The backend serves the frontend's **built** static files from `public/` (see
+below) — `bun run start` alone won't have a UI to serve until you've run the
+frontend build at least once.
+
 - Open `http://<host>:<PORT>/?token=<BROWSER_TOKEN>`.
 - `GET /health` reports `{ ok, deviceOnline, battery }`.
 - Voice needs `GEMINI_API_KEY`; without it the buttons still fly the drone.
+
+## Run the frontend
+
+```bash
+cd web
+bun install
+bun run dev      # HMR dev server (proxies /ws, /health, /selftest to the
+                  # backend on :8080 -- run the backend separately alongside)
+```
+
+`web/src/lib/ws-protocol.ts` re-exports the wire-contract types straight from
+`../src/protocol.ts` (a relative import across the two project roots) so the
+frontend can never drift from the backend's message shapes without a compile
+error. `web/` is a fully separate `package.json`/`bun.lock` (its own
+toolchain — React, Vite, Tailwind, shadcn/ui — kept out of the backend's
+dependency tree), analogous to how `firmware/` is its own project.
+
+For an integrated production-like preview on one port (matching how Docker
+actually deploys it):
+
+```bash
+cd web && bun run build   # tsc -b && vite build -> ../public/
+cd .. && bun run start    # backend now serves the built UI from public/
+```
+
+`public/` is gitignored — it's pure build output (the Dockerfile's first
+stage produces it fresh; see below).
 
 ### Production (secure context)
 
@@ -58,6 +89,13 @@ content). Put the backend behind a TLS terminator with a real certificate — e.
 managed platform (Cloud Run / Fly / Render) or nginx/Caddy with Let's Encrypt.
 Given a 1 GbE backend host, the extra internet hop for command relay adds only
 ~100–300 ms on top of the (dominant) STT+LLM latency.
+
+The `Dockerfile` is multi-stage: stage 1 builds `web/` (needs `src/protocol.ts`
+copied alongside it for the cross-root type import) and produces static
+files; stage 2 is the backend image, which copies that build output straight
+into `public/`. One container, one `bun run src/server.ts` process, serving
+both the API/WebSocket endpoints and the built UI — no separate frontend
+host/CDN, no second server process.
 
 ## Tests
 

@@ -428,10 +428,16 @@ const server = Bun.serve<SocketData>({
       return Response.json(results);
     }
 
-    // Static web app.
+    // Static web app (Vite build output) -- SPA, so any unmatched path that
+    // isn't a literal static asset falls back to index.html and lets
+    // react-router take over client-side (e.g. a direct nav/refresh on
+    // /track). Real static files (JS/CSS/fonts under /assets, favicon, etc.)
+    // are served as-is when they exist.
     const path = url.pathname === "/" ? "/index.html" : url.pathname;
     const file = Bun.file(`public${path}`);
     if (await file.exists()) return new Response(file);
+    const index = Bun.file("public/index.html");
+    if (await index.exists()) return new Response(index);
     return new Response("not found", { status: 404 });
   },
 
