@@ -103,6 +103,18 @@ export function registerCustomMarker(pattern: readonly boolean[], tau: number): 
   };
 }
 
+/** Test-support accessor for this module's own js-aruco2 dictionary
+ * registry -- lets a test confirm what registerCustomMarker() actually
+ * stored without reaching into a separately-resolved `import("js-aruco2")`
+ * (which, from another package/build root, may land on a DIFFERENT
+ * physical module instance than the one this file's own top-level `AR`
+ * import resolved to, and therefore a different DICTIONARIES object --
+ * see web/src/lib/tracking.ts's identical accessor, used by
+ * web/src/lib/tracking.test.ts for exactly this reason). */
+export function __getDictionaryForTest(name: string): ArucoDictionaryDef | undefined {
+  return AR.DICTIONARIES[name];
+}
+
 /** Steering output for one processed video frame. */
 export interface SteeringResult {
   markerFound: boolean;

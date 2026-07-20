@@ -72,23 +72,19 @@ describe("patternToCode matches backend", () => {
 });
 
 describe("registerCustomMarker matches backend", () => {
-  // web/src/lib/tracking.ts loads its OWN independent js-aruco2 instance
-  // (evaluated from raw source text -- see that file's loading comment)
-  // rather than sharing the "js-aruco2" package's Node/Bun module-cache
-  // singleton the backend uses. That's correct for the real deployment
-  // (web and backend are separately built/deployed, per ws-protocol.ts's
-  // convention comment), so these tests verify each side's registration
-  // independently -- web via its own __getDictionaryForTest accessor,
-  // backend via the shared "js-aruco2" singleton (matching
-  // src/tracking.test.ts's own precedent) -- rather than assuming a
-  // shared object identity that no longer holds.
-  test("both sides register an equivalent dictionary entry for the same pattern/tau", async () => {
-    // Dynamic (not static) import, matching src/tracking.test.ts's own
-    // precedent: reaches past the backend's deliberately-private `AR`
-    // binding to inspect its dictionary singleton directly, a test-only
-    // escape hatch.
-    // @ts-expect-error -- untyped module, same pattern as tracking.ts's own import
-    const { AR } = await import("js-aruco2");
+  // Both web/src/lib/tracking.ts and src/tracking.ts (backend) now load
+  // their OWN independent js-aruco2 module instance -- web/ has its own
+  // "js-aruco2" dependency (needed so Vite can resolve the `?raw` source
+  // imports in an isolated build, e.g. the Docker web-build stage, which
+  // has no access to the repo root's node_modules), so a dynamic
+  // `import("js-aruco2")` from this test file no longer reliably lands on
+  // the same physical module the backend's own top-level import resolved
+  // to -- that assumption held only incidentally, back when web/ had no
+  // js-aruco2 dependency of its own. Each side is therefore inspected via
+  // its own __getDictionaryForTest accessor (web/src/lib/tracking.ts and
+  // src/tracking.ts both export one, for exactly this reason) rather than
+  // reaching into a freshly re-imported AR.DICTIONARIES.
+  test("both sides register an equivalent dictionary entry for the same pattern/tau", () => {
     const pattern = [
       true, false, true, false, false, true, false, true, true, true, false, false, false, false, true, true,
     ];
@@ -97,32 +93,28 @@ describe("registerCustomMarker matches backend", () => {
     const afterWeb = web.__getDictionaryForTest(web.CUSTOM_MARKER_DICT_NAME);
 
     backend.registerCustomMarker(pattern, 4);
-    const afterBackend = AR.DICTIONARIES[backend.CUSTOM_MARKER_DICT_NAME];
+    const afterBackend = backend.__getDictionaryForTest(backend.CUSTOM_MARKER_DICT_NAME);
 
     expect(afterWeb).toEqual(afterBackend);
   });
 
-  test("tau=0 edge case: both clamp to 1, never js-aruco2's match-anything fallback", async () => {
-    // @ts-expect-error -- untyped module, same pattern as tracking.ts's own import
-    const { AR } = await import("js-aruco2");
+  test("tau=0 edge case: both clamp to 1, never js-aruco2's match-anything fallback", () => {
     const pattern = new Array(16).fill(true);
 
     web.registerCustomMarker(pattern, 0);
     expect(web.__getDictionaryForTest(web.CUSTOM_MARKER_DICT_NAME)?.tau).toBe(1);
 
     backend.registerCustomMarker(pattern, 0);
-    expect(AR.DICTIONARIES[backend.CUSTOM_MARKER_DICT_NAME].tau).toBe(1);
+    expect(backend.__getDictionaryForTest(backend.CUSTOM_MARKER_DICT_NAME)?.tau).toBe(1);
   });
 
-  test("negative tau edge case: both clamp to 1 identically", async () => {
-    // @ts-expect-error -- untyped module, same pattern as tracking.ts's own import
-    const { AR } = await import("js-aruco2");
+  test("negative tau edge case: both clamp to 1 identically", () => {
     const pattern = new Array(16).fill(false);
 
     web.registerCustomMarker(pattern, -5);
     const webTau = web.__getDictionaryForTest(web.CUSTOM_MARKER_DICT_NAME)?.tau;
     backend.registerCustomMarker(pattern, -5);
-    const backendTau = AR.DICTIONARIES[backend.CUSTOM_MARKER_DICT_NAME].tau;
+    const backendTau = backend.__getDictionaryForTest(backend.CUSTOM_MARKER_DICT_NAME)?.tau;
     expect(webTau).toBe(1);
     expect(backendTau).toBe(1);
   });
