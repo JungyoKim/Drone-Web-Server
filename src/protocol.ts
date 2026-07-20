@@ -61,8 +61,10 @@ export type ServerToBrowser =
   | { type: "parsed"; command: DroneCommand; raw: string }
   /** Tello's reply relayed up from the device (ok / error / telemetry value). */
   | { type: "tello"; command: DroneCommand; response: string; ok: boolean }
-  /** Device connectivity + battery for the UI header. */
-  | { type: "status"; deviceOnline: boolean; battery: number | null }
+  /** Device connectivity + battery for the UI header. isFlying is a
+   * best-effort inference from observed takeoff/land/emergency replies --
+   * unknown until the first such reply is seen this session. */
+  | { type: "status"; deviceOnline: boolean; battery: number | null; isFlying: boolean | null }
   /** ArUco tracking telemetry, broadcast a few times a second while active. */
   | { type: "tracking"; active: boolean; markerFound: boolean; markerId?: number; dx?: number; dy?: number; sizeRatio?: number; rc?: { a: number; b: number; c: number; d: number } }
   /** Recoverable error surfaced to the user. */
