@@ -24,6 +24,13 @@ export const config = {
   arucoDictionary: Bun.env.ARUCO_DICTIONARY ?? "ARUCO_MIP_36h12",
   /** Track only this marker id; unset = follow whichever marker is seen. */
   arucoTargetId: Bun.env.ARUCO_TARGET_ID != null ? Number(Bun.env.ARUCO_TARGET_ID) : undefined,
+  /** Max Hamming distance (out of 16 bits) still counted as a match for a
+   * web-drawn custom 4x4 marker (see set_marker in protocol.ts). Higher =
+   * more tolerant of camera noise/lighting but more prone to false
+   * positives on an unrelated pattern; there's only one marker in a custom
+   * dictionary, so this can't be auto-derived the way built-in multi-marker
+   * dictionaries derive their tau. */
+  arucoCustomTau: Number(Bun.env.ARUCO_CUSTOM_TAU ?? 4),
   /** Apparent marker size (px, avg side length) that means "at the right
    * distance" -- bigger => drone thinks it's too close and backs off. Tune
    * empirically for your marker's real-world size + desired follow distance. */

@@ -51,6 +51,15 @@ export type BrowserToServer =
   | { type: "command"; command: DroneCommand }
   /** Start/stop ArUco-marker-follow mode (drives streamon/off + a continuous rc loop). */
   | { type: "track"; on: boolean }
+  /** Sets the live custom marker to track: a 16-cell (4x4 grid) black/white
+   * pattern, row-major, `true` = white cell. Takes effect on the next
+   * `{type:"track",on:true}` -- re-registers the ArUco dictionary used for
+   * detection. See src/tracking.ts's registerCustomMarker/patternToCode for
+   * the exact bit encoding (kept out of this dependency-free protocol file). */
+  | { type: "set_marker"; pattern: boolean[] }
+  /** Reverts to the statically configured dictionary (ARUCO_DICTIONARY /
+   * ARUCO_TARGET_ID env vars) instead of a custom pattern. */
+  | { type: "clear_marker" }
   /** Liveness. */
   | { type: "ping" };
 
@@ -67,6 +76,12 @@ export type ServerToBrowser =
   | { type: "status"; deviceOnline: boolean; battery: number | null; isFlying: boolean | null }
   /** ArUco tracking telemetry, broadcast a few times a second while active. */
   | { type: "tracking"; active: boolean; markerFound: boolean; markerId?: number; dx?: number; dy?: number; sizeRatio?: number; rc?: { a: number; b: number; c: number; d: number } }
+  /** Currently active custom marker pattern (16-cell, row-major, `true` =
+   * white), or `null` when using the statically configured dictionary
+   * instead. Sent on connect and whenever it changes, so every connected
+   * browser (e.g. one open on the marker designer, another on tracking)
+   * stays in sync on what's actually being tracked. */
+  | { type: "marker_pattern"; pattern: boolean[] | null }
   /** Live camera preview frame (JPEG, base64, no `data:` prefix), pushed
    * while tracking is active. Independent of the "tracking" telemetry
    * above -- this is purely the raw camera view for the UI, not steering

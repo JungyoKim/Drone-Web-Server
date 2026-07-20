@@ -207,6 +207,34 @@ graph LR
 - **v1 has no lateral strafe** (`rc`'s `a`/roll channel is always 0) — yaw
   alone re-centers horizontally, to avoid uncommanded sideways drift.
 
+### Custom 4x4 markers (draw your own, no printer-shop dictionary lookup)
+
+The `/marker` tab is both the marker *designer* and its *tracking config* in
+one: click cells in a 4x4 grid to draw a black/white pattern, and that exact
+pattern is simultaneously (a) rendered as a printable marker (SVG download or
+direct print, true-to-size at 80mm) and (b) registered as what the ArUco
+detector looks for once you hit "이 마커 추적하기" — no separate dictionary/ID
+bookkeeping, the grid you drew *is* the marker.
+
+- **How it works:** `{type:"set_marker", pattern}` (16 booleans, row-major,
+  `true`=white) registers a one-marker custom js-aruco2 dictionary at runtime
+  (`registerCustomMarker` in `src/tracking.ts`) and takes effect on the next
+  `{type:"track",on:true}`. `{type:"clear_marker"}` reverts to the static
+  `ARUCO_DICTIONARY`/`ARUCO_TARGET_ID` config. The active pattern is broadcast
+  to every connected browser (`{type:"marker_pattern"}`), so the designer tab
+  and the tracking tab never disagree about what's being followed.
+- **Rotation-invariant by construction.** js-aruco2's detector always tries
+  all 4 rotations of what it sees against the registered pattern (not
+  something this feature has to handle itself) — verified against the real
+  library in `src/tracking.test.ts`, including a full print → (any camera
+  rotation) → detect round trip.
+- **`ARUCO_CUSTOM_TAU`** (default 4, out of 16 bits) sets the match
+  tolerance. Unlike the built-in multi-marker dictionaries, a custom
+  single-marker dictionary can't auto-derive a sensible tau from pairwise
+  code distances (there's only one code), so this is explicit — raise it if
+  detection is flaky in poor lighting, lower it if something else in frame is
+  false-triggering.
+
 ### Confirmed working
 
 - **`streamon` in station mode does actually stream, reliably.** Verified live

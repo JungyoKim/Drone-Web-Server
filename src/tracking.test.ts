@@ -1,5 +1,14 @@
 import { test, expect, describe } from "bun:test";
-import { computeSteering, pickTargetMarker, splitJpegFrames, type SteeringConfig } from "./tracking.ts";
+import {
+  computeSteering,
+  pickTargetMarker,
+  splitJpegFrames,
+  patternToCode,
+  registerCustomMarker,
+  CUSTOM_MARKER_DICT_NAME,
+  CUSTOM_MARKER_BITS,
+  type SteeringConfig,
+} from "./tracking.ts";
 
 /**
  * Unit tests for the pure, safety-critical steering math in tracking.ts.
@@ -253,5 +262,114 @@ describe("splitJpegFrames", () => {
     const { frames, rest } = splitJpegFrames(new Uint8Array(0), new Uint8Array(0));
     expect(frames.length).toBe(0);
     expect(rest.length).toBe(0);
+  });
+});
+
+/**
+ * Unit tests for the web-drawn custom 4x4 marker: pure encoding
+ * (patternToCode) plus a LIVE integration test against the real js-aruco2
+ * library (imported separately here -- module resolution caches "js-aruco2"
+ * by path, so this is the SAME AR.DICTIONARIES registry registerCustomMarker
+ * mutates, not a separate instance). This is the strongest possible check
+ * that a pattern drawn in the web UI is actually detectable: it registers a
+ * pattern, then drives the real AR.Dictionary/AR.Detector rotation-search
+ * exactly as getMarker() in js-aruco2/src/aruco.js does, confirming
+ * detection at all 4 camera rotations relative to how it was printed.
+ */
+describe("custom marker (patternToCode / registerCustomMarker)", () => {
+  // A hand-picked, asymmetric 16-cell pattern (row-major, true = white) --
+  // asymmetric so rotated copies are never accidentally equal to each other,
+  // which would make the rotation-invariance assertions below meaningless.
+  const pattern = [
+    true, false, true, false,
+    false, true, false, true,
+    true, true, false, false,
+    false, false, true, true,
+  ];
+
+  test("patternToCode encodes MSB-first, row-major", () => {
+    expect(patternToCode(pattern)).toBe(0b1010010111000011);
+    expect(patternToCode(new Array(CUSTOM_MARKER_BITS).fill(false))).toBe(0);
+    expect(patternToCode(new Array(CUSTOM_MARKER_BITS).fill(true))).toBe(0xffff);
+  });
+
+  test("patternToCode throws on the wrong cell count", () => {
+    expect(() => patternToCode(new Array(CUSTOM_MARKER_BITS - 1).fill(true))).toThrow();
+    expect(() => patternToCode(new Array(CUSTOM_MARKER_BITS + 1).fill(true))).toThrow();
+  });
+
+  test("a registered pattern is found by the real js-aruco2 dictionary at every camera rotation", async () => {
+    // @ts-expect-error -- untyped module, see tracking.ts's own import
+    const { AR } = await import("js-aruco2");
+    registerCustomMarker(pattern, 4);
+
+    const dict = new AR.Dictionary(CUSTOM_MARKER_DICT_NAME);
+    // Mirrors AR.Detector.prototype.rotate exactly (js-aruco2/src/aruco.js)
+    // -- reimplemented locally (not read off a Detector instance) so this
+    // test doesn't need an inline shape cast for an untyped module.
+    function rotate(src: number[][]): number[][] {
+      const len = src.length;
+      const dst: number[][] = [];
+      for (let i = 0; i < len; i++) {
+        dst.push([]);
+        for (let j = 0; j < len; j++) dst[i]!.push(src[len - j - 1]![i]!);
+      }
+      return dst;
+    }
+
+    const size = Math.sqrt(CUSTOM_MARKER_BITS);
+    let bits2d: number[][] = [];
+    for (let y = 0; y < size; y++) bits2d.push(pattern.slice(y * size, (y + 1) * size).map((b) => (b ? 1 : 0)));
+
+    // Mirrors AR.Detector.prototype.getMarker's own 4-rotation search loop
+    // exactly (js-aruco2/src/aruco.js) -- if a camera saw the printed marker
+    // rotated by 0/90/180/270 degrees, this is how it recovers the id.
+    function searchAllRotations(initial: number[][]) {
+      const rotations = [initial];
+      let foundMin: { id: number; distance: number } | null = null;
+      for (let i = 0; i < 4; i++) {
+        const found = dict.find(rotations[i]!);
+        if (found && (foundMin === null || found.distance < foundMin.distance)) {
+          foundMin = found;
+          if (found.distance === 0) break; // `found` (not foundMin) -- already non-null-checked above
+        }
+        rotations[i + 1] = rotate(rotations[i]!);
+      }
+      return foundMin;
+    }
+
+    let cameraView = bits2d;
+    for (let r = 0; r < 4; r++) {
+      expect(searchAllRotations(cameraView)).toEqual({ id: 0, distance: 0 });
+      cameraView = rotate(cameraView);
+    }
+  });
+
+  test("an unrelated pattern beyond tau does not match", async () => {
+    // @ts-expect-error -- untyped module, see tracking.ts's own import
+    const { AR } = await import("js-aruco2");
+    registerCustomMarker(pattern, 4);
+    const dict = new AR.Dictionary(CUSTOM_MARKER_DICT_NAME);
+
+    // Inverts every cell -- maximally different (16 bits flipped), nowhere
+    // near tau=4 regardless of rotation.
+    const size = Math.sqrt(CUSTOM_MARKER_BITS);
+    const inverted = pattern.map((b) => !b);
+    const bits2d: number[][] = [];
+    for (let y = 0; y < size; y++) bits2d.push(inverted.slice(y * size, (y + 1) * size).map((b) => (b ? 1 : 0)));
+
+    expect(dict.find(bits2d)).toBeFalsy();
+  });
+
+  test("re-registering overwrites the previous pattern (only one active marker)", async () => {
+    // @ts-expect-error -- untyped module, see tracking.ts's own import
+    const { AR } = await import("js-aruco2");
+    registerCustomMarker(pattern, 4);
+    const other = pattern.map((b) => !b);
+    registerCustomMarker(other, 4);
+
+    const dict = new AR.Dictionary(CUSTOM_MARKER_DICT_NAME);
+    expect(dict.codeList.length).toBe(1); // still exactly one marker, not accumulated
+    expect(dict.codeList[0]).toBe(patternToCode(other).toString(2).padStart(CUSTOM_MARKER_BITS, "0"));
   });
 });

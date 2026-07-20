@@ -2,7 +2,16 @@ import type { ServerWebSocket } from "bun";
 import { config } from "./config.ts";
 import { mapCommand, parseTelloReply } from "./tello.ts";
 import { parseAudioCommand, pingText, describeCommand } from "./gemini.ts";
-import { TrackingSession, VideoPreviewSession, type SteeringResult, type SteeringConfig, type PreviewConfig } from "./tracking.ts";
+import {
+  TrackingSession,
+  VideoPreviewSession,
+  registerCustomMarker,
+  CUSTOM_MARKER_DICT_NAME,
+  CUSTOM_MARKER_BITS,
+  type SteeringResult,
+  type SteeringConfig,
+  type PreviewConfig,
+} from "./tracking.ts";
 import type {
   BrowserToServer,
   ServerToBrowser,
@@ -44,6 +53,12 @@ let lastBattery: number | null = null;
  * just a no-op), so this exists purely to stop tracking mode from being a
  * confusing silent no-op -- see the warning in startTracking() below. */
 let isFlying: boolean | null = null;
+/** Currently active web-drawn custom marker (16-cell, row-major), or null to
+ * use the statically configured dictionary/target id. Registered into
+ * js-aruco2 via registerCustomMarker() as soon as it's set (cheap, pure
+ * bookkeeping); actually TAKING EFFECT for detection requires the next
+ * startTracking() call, since that's when a fresh AR.Detector is built. */
+let customMarkerPattern: boolean[] | null = null;
 
 const pending = new Map<number, PendingCommand>();
 let nextCommandId = 1;
@@ -74,6 +89,9 @@ function broadcastStatus(): void {
     battery: lastBattery,
     isFlying,
   });
+}
+function broadcastMarkerPattern(): void {
+  broadcastBrowsers({ type: "marker_pattern", pattern: customMarkerPattern });
 }
 
 // ---------- Command dispatch ----------
@@ -218,8 +236,16 @@ async function startTracking(ws: Socket): Promise<void> {
     });
   }
 
+  // A web-drawn custom pattern (see set_marker) overrides the statically
+  // configured dictionary/target-id for this session -- registerCustomMarker
+  // already (re-)registered it into js-aruco2 when it was set, so this just
+  // needs to point the fresh AR.Detector at that dictionary, always id 0
+  // (a custom dictionary holds exactly one marker).
+  const sessionSteeringConfig: SteeringConfig = customMarkerPattern
+    ? { ...steeringConfig, dictionaryName: CUSTOM_MARKER_DICT_NAME, targetMarkerId: 0 }
+    : steeringConfig;
   trackingSession = new TrackingSession(
-    steeringConfig,
+    sessionSteeringConfig,
     (result) => {
       lastSteering = result;
       lastSteeringAtMs = Date.now();
@@ -287,6 +313,30 @@ async function onBrowserMessage(ws: Socket, raw: string): Promise<void> {
     case "track": {
       if (msg.on) void startTracking(ws);
       else stopTracking();
+      return;
+    }
+
+    case "set_marker": {
+      if (!Array.isArray(msg.pattern) || msg.pattern.length !== CUSTOM_MARKER_BITS || !msg.pattern.every((b) => typeof b === "boolean")) {
+        sendBrowser(ws, { type: "error", message: `마커 패턴은 ${CUSTOM_MARKER_BITS}칸(4x4) boolean 배열이어야 합니다` });
+        return;
+      }
+      try {
+        registerCustomMarker(msg.pattern, config.arucoCustomTau);
+      } catch (e) {
+        sendBrowser(ws, { type: "error", message: `마커 등록 실패: ${e instanceof Error ? e.message : String(e)}` });
+        return;
+      }
+      customMarkerPattern = msg.pattern;
+      broadcastMarkerPattern();
+      broadcastBrowsers({ type: "info", message: "커스텀 마커가 설정되었습니다 -- 다음 추적 시작부터 적용됩니다" });
+      return;
+    }
+
+    case "clear_marker": {
+      customMarkerPattern = null;
+      broadcastMarkerPattern();
+      broadcastBrowsers({ type: "info", message: "커스텀 마커가 해제되었습니다 (기본 딕셔너리로 복귀)" });
       return;
     }
 
@@ -512,6 +562,7 @@ const server = Bun.serve<SocketData>({
           battery: lastBattery,
           isFlying,
         });
+        sendBrowser(ws, { type: "marker_pattern", pattern: customMarkerPattern });
       }
     },
     message(ws, message) {

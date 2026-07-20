@@ -52,6 +52,11 @@ export interface DroneSocketState {
    * own comment above the useState for why "disconnected" alone isn't
    * enough to tell a bad token from a routine retry). */
   everConnected: boolean;
+  /** Currently active custom marker pattern (16-cell, row-major), or null
+   * when using the statically configured dictionary. Kept in sync with the
+   * backend (which is the source of truth, and broadcasts to every
+   * connected browser) rather than only reflecting local edits. */
+  markerPattern: boolean[] | null;
 }
 
 function tokenFromUrl(): string {
@@ -107,6 +112,7 @@ export function useDroneSocket() {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [processing, setProcessing] = useState(false);
   const [lastTranscript, setLastTranscript] = useState<string | null>(null);
+  const [markerPattern, setMarkerPattern] = useState<boolean[] | null>(null);
   // Has this session EVER seen a successful open? A bad token on the
   // BROWSER endpoint is rejected at the HTTP upgrade (401) before any
   // WebSocket handshake completes, so it closes with code 1006 (abnormal),
@@ -226,6 +232,10 @@ export function useDroneSocket() {
         case "status":
           setDeviceOnline(!!msg.deviceOnline);
           setBattery(typeof msg.battery === "number" ? msg.battery : null);
+          return;
+
+        case "marker_pattern":
+          setMarkerPattern(Array.isArray(msg.pattern) ? msg.pattern : null);
           return;
 
         case "tracking": {
@@ -430,6 +440,21 @@ export function useDroneSocket() {
     [send, appendLog],
   );
 
+  const applyMarkerPattern = useCallback(
+    (pattern: boolean[]) => {
+      if (send({ type: "set_marker", pattern })) {
+        appendLog("sent", "\u2192 커스텀 마커 설정");
+      }
+    },
+    [send, appendLog],
+  );
+
+  const clearMarkerPattern = useCallback(() => {
+    if (send({ type: "clear_marker" })) {
+      appendLog("sent", "\u2192 커스텀 마커 해제");
+    }
+  }, [send, appendLog]);
+
   /** Subscribes to live camera preview frames (base64 JPEG, no `data:`
    * prefix); returns an unsubscribe function. See frameListenersRef above
    * for why this bypasses React state entirely. */
@@ -450,9 +475,21 @@ export function useDroneSocket() {
     processing,
     lastTranscript,
     everConnected,
+    markerPattern,
   };
 
-  return { state, token, setToken, connect: reconnectNow, sendCommand, sendAudio, setTrack, onFrame };
+  return {
+    state,
+    token,
+    setToken,
+    connect: reconnectNow,
+    sendCommand,
+    sendAudio,
+    setTrack,
+    onFrame,
+    applyMarkerPattern,
+    clearMarkerPattern,
+  };
 }
 
 export type UseDroneSocket = ReturnType<typeof useDroneSocket>;

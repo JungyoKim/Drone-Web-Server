@@ -19,13 +19,78 @@ interface ArucoDetectorCtor {
   new (config?: { dictionaryName?: string; maxHammingDistance?: number }): ArucoDetector;
 }
 
+/** One js-aruco2 dictionary definition, as assignable to `AR.DICTIONARIES`.
+ * `codeList[i]` may be a number (parsed as binary via toString(2)), a hex
+ * string, or an array of bytes -- see AR.Dictionary.prototype._initialize in
+ * js-aruco2/src/aruco.js. This file only ever produces the `number` form. */
+interface ArucoDictionaryDef {
+  nBits: number;
+  tau: number;
+  codeList: Array<number | string | number[]>;
+}
+
 // js-aruco2 ships no TypeScript declarations (plain CJS, no @types package,
 // and this task adds no separate .d.ts file) -- import untyped and narrow to
 // the small surface above via a single cast, rather than augmenting the
 // (nonexistent) module types, which tsc rejects for an untyped CJS module.
 // @ts-expect-error -- untyped module, see comment above
 import { AR as arucoRuntime } from "js-aruco2";
-const AR = arucoRuntime as unknown as { Detector: ArucoDetectorCtor };
+const AR = arucoRuntime as unknown as {
+  Detector: ArucoDetectorCtor;
+  DICTIONARIES: Record<string, ArucoDictionaryDef>;
+};
+
+// ---------- Custom (web-drawn) 4x4 marker ----------
+
+/** Interior data cells for a 4x4 custom marker (16 bits total, matching the
+ * classic ArUco 4x4 marker layout: a 1-cell black border around a 4x4 grid). */
+export const CUSTOM_MARKER_BITS = 16;
+export const CUSTOM_MARKER_GRID_SIZE = 4; // sqrt(CUSTOM_MARKER_BITS)
+
+/** js-aruco2 dictionary name for the live, user-drawn custom marker.
+ * Re-registered (overwritten in place) by registerCustomMarker() each time a
+ * new pattern is applied; always holds exactly one marker, at id 0. */
+export const CUSTOM_MARKER_DICT_NAME = "TELLOVOICE_CUSTOM";
+
+/**
+ * Encodes a 4x4 (16-cell) black/white pattern into the packed integer js-
+ * aruco2's dictionary loader expects: MSB-first, row-major (pattern[0] = top-
+ * left cell). `true` = white/"1" cell, `false` = black/"0" cell -- this
+ * ordering is exactly what AR.Dictionary.prototype.generateSVG reads back
+ * (see js-aruco2/src/aruco.js), so a pattern round-trips identically through
+ * both "render it to print" (frontend) and "register it for detection"
+ * (here) -- verified against the real library, including that all 4 camera
+ * rotations of a printed marker still resolve to the same id.
+ */
+export function patternToCode(pattern: readonly boolean[]): number {
+  if (pattern.length !== CUSTOM_MARKER_BITS) {
+    throw new Error(`marker pattern must be exactly ${CUSTOM_MARKER_BITS} cells, got ${pattern.length}`);
+  }
+  let code = 0;
+  for (const bit of pattern) code = (code << 1) | (bit ? 1 : 0);
+  return code;
+}
+
+/**
+ * Registers (or re-registers) a single-marker js-aruco2 dictionary for the
+ * given pattern, so a subsequent `new AR.Detector({ dictionaryName:
+ * CUSTOM_MARKER_DICT_NAME })` recognizes it at any of the 4 rotations (the
+ * detector always tries all 4 -- see getMarker() in js-aruco2/src/aruco.js).
+ *
+ * `tau` is the max Hamming distance (out of 16 bits) still counted as a
+ * match. Required explicitly: js-aruco2's own tau auto-derivation compares
+ * every pair of codes in a dictionary, which degenerates to
+ * Number.MAX_VALUE (matches anything) for a single-entry codeList like this
+ * one, unlike the built-in multi-marker dictionaries.
+ */
+export function registerCustomMarker(pattern: readonly boolean[], tau: number): void {
+  const code = patternToCode(pattern);
+  AR.DICTIONARIES[CUSTOM_MARKER_DICT_NAME] = {
+    nBits: CUSTOM_MARKER_BITS,
+    tau,
+    codeList: [code],
+  };
+}
 
 /** Steering output for one processed video frame. */
 export interface SteeringResult {

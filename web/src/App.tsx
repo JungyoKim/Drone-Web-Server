@@ -8,6 +8,7 @@ import CommandLog from "@/components/CommandLog";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import ManualControls from "@/components/ManualControls";
 import TrackingPanel from "@/components/TrackingPanel";
+import MarkerDesigner from "@/components/MarkerDesigner";
 import { Toaster } from "@/components/ui/sonner";
 import { useDroneSocket } from "@/hooks/useDroneSocket";
 
@@ -73,6 +74,16 @@ export default function App() {
                   deviceOnline={ds.state.deviceOnline}
                   onToggle={ds.setTrack}
                   onFrame={ds.onFrame}
+                />
+              }
+            />
+            <Route
+              path="/marker"
+              element={
+                <MarkerDesigner
+                  activePattern={ds.state.markerPattern}
+                  onApply={ds.applyMarkerPattern}
+                  onClear={ds.clearMarkerPattern}
                 />
               }
             />
