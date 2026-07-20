@@ -207,27 +207,27 @@ graph LR
 - **v1 has no lateral strafe** (`rc`'s `a`/roll channel is always 0) — yaw
   alone re-centers horizontally, to avoid uncommanded sideways drift.
 
+### Confirmed working
+
+- **`streamon` in station mode does actually stream, reliably.** Verified live
+  with a real Tello: after fixing `VIDEO_HOST` to bypass a Cloudflare-proxied
+  domain (raw UDP never traverses standard Cloudflare proxying — point it at
+  the origin server's real IP), a PSRAM `memory_type` boot-crash on the
+  ESP32-S3 N16R8 module, and the ffmpeg pipe-stalls-until-EOF issue above,
+  live camera preview + ArUco `tracking` telemetry both showed up in the web
+  app from the real drone's station-mode stream. If yours doesn't: confirm
+  `VIDEO_HOST` is the origin IP (not a proxied domain), `VIDEO_PORT` is
+  actually reachable from the ESP32 (host firewall / platform port-publish
+  config, not just the app's own UDP bind — see the port-forwarding note
+  above), and check the firmware's periodic `[video] rx N pkts` log to see
+  whether Tello is sending anything to the ESP32 at all before suspecting the
+  ESP32 → backend leg.
+
 ### ⚠️ Unverified before a real flight
 
-1. **`streamon` while Tello is in station mode, from the REAL drone, is not
-   confirmed reliable.** Tello's video pipeline is best-documented in its own
-   AP mode; behavior when joined to the ESP32's soft-AP (our setup) is
-   community-reported as inconsistent, not officially guaranteed. (The decode
-   pipeline itself — UDP relay → ffmpeg → js-aruco2/JPEG, including the
-   ffmpeg-stalls-until-EOF fix above — IS verified end-to-end against a real,
-   continuous, synthetic H.264 feed; what's unverified is specifically
-   whether the real Tello actually emits its stream reliably once joined to
-   the ESP32's AP.) **Test this first, in isolation:** toggle tracking on and
-   confirm `markerFound` telemetry (or a live preview frame) ever arrives —
-   even `markerFound:false` proves frames are decoding. If neither a
-   `tracking` update past the initial `{active:true, markerFound:false}` nor
-   a `frame` message ever arrives, video isn't reaching the detector — check
-   `VIDEO_HOST`/`VIDEO_PORT` match on both ends, that `VIDEO_PORT` is actually
-   reachable from the ESP32 (see the port-forwarding note above), and that
-   the firmware log shows packets being relayed.
-2. **Sign conventions for `rc`'s roll/pitch/throttle/yaw are unverified** —
+1. **Sign conventions for `rc`'s roll/pitch/throttle/yaw are unverified** —
    flip gain signs per-channel after watching the first real attempt.
-3. **Fly over a soft/open area with prop guards on the first test.** Start
+2. **Fly over a soft/open area with prop guards on the first test.** Start
    with `TRACK_MAX_RC` low (e.g. 15–20) until the loop's behavior is confirmed
    sane, then raise it.
 
