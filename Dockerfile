@@ -1,6 +1,9 @@
 # tellovoice backend — Bun. Deployable on Dokploy (Nixpacks or Dockerfile mode).
 FROM oven/bun:1.3-alpine
 
+# ffmpeg decodes the ESP32's relayed Tello H.264 video for ArUco marker tracking.
+RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
 
 # Install deps first for layer caching.

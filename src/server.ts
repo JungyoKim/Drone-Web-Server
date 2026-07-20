@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { config } from "./config.ts";
 import { mapCommand, parseTelloReply } from "./tello.ts";
 import { parseAudioCommand, pingText, describeCommand } from "./gemini.ts";
+import { TrackingSession, type SteeringResult, type SteeringConfig } from "./tracking.ts";
 import type {
   BrowserToServer,
   ServerToBrowser,
@@ -128,6 +129,96 @@ export async function runCommandSequence(
   return { executed, reason: "done" };
 }
 
+// ---------- ArUco marker-follow ----------
+
+let trackingActive = false;
+let trackingSession: TrackingSession | null = null;
+let trackRcTimer: ReturnType<typeof setInterval> | null = null;
+let lastSteering: SteeringResult | null = null;
+let lastSteeringAtMs = 0;
+/** No fresh detected frame within this window -> failsafe to rc 0 0 0 0 rather
+ * than keep repeating a stale command (video pipe stalled / marker occluded). */
+const STEERING_STALE_MS = 500;
+/** Send cadence for `rc`, matching the Tello SDK's recommended 5-10 Hz. Decoupled
+ * from actual video frame rate so a fast decoder can't flood the device link. */
+const RC_SEND_INTERVAL_MS = 100;
+
+const steeringConfig: SteeringConfig = {
+  frameWidth: config.videoWidth,
+  frameHeight: config.videoHeight,
+  dictionaryName: config.arucoDictionary,
+  targetMarkerId: config.arucoTargetId,
+  targetSizePx: config.arucoTargetSizePx,
+  maxRc: config.trackMaxRc,
+  yawGain: config.trackYawGain,
+  altGain: config.trackAltGain,
+  distGain: config.trackDistGain,
+};
+
+/** Stop tracking unconditionally: safe to call when already stopped (idempotent),
+ * from an emergency event, a manual command, `{type:"track",on:false}`, or device
+ * disconnect. Always zeroes rc before tearing down so the drone never keeps the
+ * last commanded velocity. */
+function stopTracking(): void {
+  if (!trackingActive && !trackingSession && !trackRcTimer) return;
+  trackingActive = false;
+  if (trackRcTimer) { clearInterval(trackRcTimer); trackRcTimer = null; }
+  if (device && deviceAuthed) sendDevice(device, { type: "rc", a: 0, b: 0, c: 0, d: 0 });
+  trackingSession?.stop();
+  trackingSession = null;
+  lastSteering = null;
+  if (device && deviceAuthed) {
+    const r = dispatch({ action: "streamoff" }, null);
+    if ("done" in r) void r.done;
+  }
+  broadcastBrowsers({ type: "tracking", active: false, markerFound: false });
+}
+
+/** Start tracking: streamon -> spawn a decode/detect session -> begin the rc
+ * send loop. Idempotent (no-op if already active). Any failure leaves tracking
+ * off and reports an error to the requesting browser. */
+async function startTracking(ws: Socket): Promise<void> {
+  if (!device || !deviceAuthed) { sendBrowser(ws, { type: "error", message: "device offline" }); return; }
+  if (trackingActive) return;
+  abortSequence(); // starting tracking supersedes any running voice sequence
+  const r = dispatch({ action: "streamon" }, ws);
+  if ("error" in r) { sendBrowser(ws, { type: "error", message: r.error }); return; }
+  const res = await r.done;
+  if (!res.ok) { sendBrowser(ws, { type: "error", message: `streamon 실패: ${res.response}` }); return; }
+
+  trackingSession = new TrackingSession(
+    steeringConfig,
+    (result) => {
+      lastSteering = result;
+      lastSteeringAtMs = Date.now();
+      broadcastBrowsers({
+        type: "tracking",
+        active: true,
+        markerFound: result.markerFound,
+        markerId: result.markerId,
+        dx: result.dx,
+        dy: result.dy,
+        sizeRatio: result.sizeRatio,
+        rc: result.rc,
+      });
+    },
+    (err) => console.error("[track] session error:", err),
+  );
+  trackingSession.start();
+  trackingActive = true;
+  // Immediate feedback -- don't leave the browser's toggle in limbo until the
+  // first frame decodes (which may be seconds away, or never if the ESP32's
+  // video relay / Tello's streamon-in-station-mode isn't actually delivering).
+  broadcastBrowsers({ type: "tracking", active: true, markerFound: false });
+
+  trackRcTimer = setInterval(() => {
+    if (!trackingActive || !device || !deviceAuthed) return;
+    const fresh = lastSteering !== null && (Date.now() - lastSteeringAtMs) < STEERING_STALE_MS;
+    const rc = fresh ? lastSteering!.rc : { a: 0, b: 0, c: 0, d: 0 };
+    sendDevice(device, { type: "rc", ...rc });
+  }, RC_SEND_INTERVAL_MS);
+}
+
 // ---------- Browser message handling ----------
 
 async function onBrowserMessage(ws: Socket, raw: string): Promise<void> {
@@ -146,8 +237,15 @@ async function onBrowserMessage(ws: Socket, raw: string): Promise<void> {
 
     case "command": {
       abortSequence(); // manual input supersedes any running sequence
+      stopTracking();  // ...including autonomous marker-follow
       const r = dispatch(msg.command, ws);
       if ("error" in r) sendBrowser(ws, { type: "error", message: r.error });
+      return;
+    }
+
+    case "track": {
+      if (msg.on) void startTracking(ws);
+      else stopTracking();
       return;
     }
 
@@ -166,6 +264,7 @@ async function onBrowserMessage(ws: Socket, raw: string): Promise<void> {
         }
         // Start a fresh sequence, cancelling any previous one still running.
         abortSequence();
+        stopTracking();
         const seq = { aborted: false };
         currentSeq = seq;
         await runCommandSequence(commands, seq, (cmd, i, total) => {
@@ -244,7 +343,7 @@ function onDeviceMessage(ws: Socket, raw: string): void {
     case "event": {
       // Hardware events. Emergency button lands the drone directly over UDP;
       // also cancel any queued multi-command sequence so nothing else fires.
-      if (msg.event === "emergency_button") abortSequence();
+      if (msg.event === "emergency_button") { abortSequence(); stopTracking(); }
       broadcastBrowsers({ type: "error", message: `device event: ${msg.event}${msg.detail ? ` (${msg.detail})` : ""}` });
       return;
     }
@@ -252,6 +351,26 @@ function onDeviceMessage(ws: Socket, raw: string): void {
     case "pong":
       return;
   }
+}
+
+// ---------- Video ingest (ArUco tracking) ----------
+// Raw UDP relay from the ESP32 (Tello's own UDP:11111 stream, forwarded verbatim
+// -- see protocol.ts's comment on the `rc` ServerToDevice message for why this is
+// out of band from the WS JSON protocol). A no-op when no session is active.
+// Failing to bind must not take down voice/button control, so this degrades to a
+// warning rather than crashing the module.
+try {
+  await Bun.udpSocket({
+    port: config.videoPort,
+    socket: {
+      data(_socket, buf) {
+        trackingSession?.feedVideoChunk(buf);
+      },
+    },
+  });
+  console.log(`[track] video UDP listener on :${config.videoPort}`);
+} catch (e) {
+  console.error(`[track] failed to bind video UDP port ${config.videoPort} -- marker tracking disabled:`, e);
 }
 
 // ---------- HTTP + WS server ----------
@@ -334,6 +453,7 @@ const server = Bun.serve<SocketData>({
       } else if (ws === device) {
         device = null;
         deviceAuthed = false;
+        stopTracking();
         broadcastStatus();
       }
     },

@@ -62,6 +62,15 @@
   }
   .toast-item.show { opacity: 1; transform: translateY(0); }
   .toast-item.info { background: var(--color-info); color: var(--color-info-content); }
+
+  /* ---- Marker tracking box (dx/dy dot positioned via JS) ---- */
+  #markerBox { position: relative; overflow: hidden; }
+  #markerPos {
+    position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px;
+    border-radius: 50%; background: var(--color-base-content); opacity: 0;
+    transition: opacity 0.15s ease, left 0.1s linear, top 0.1s linear;
+  }
+  #markerPos.found { background: var(--color-success); opacity: 1; box-shadow: 0 0 6px var(--color-success); }
 </style>
 </head>
 <body class="max-w-[560px] mx-auto px-3 pb-6 bg-base-100 text-base-content min-h-screen" style="padding-top: calc(env(safe-area-inset-top, 0px) + 56px);">
@@ -80,6 +89,26 @@
     비상 착륙
     <small class="block text-[11px] font-semibold tracking-normal opacity-85 normal-case">눌러서 즉시 착륙 &middot; 하드웨어 버튼이 진짜 최후 수단</small>
   </button>
+
+  <!-- Marker tracking -->
+  <div class="card card-border bg-base-200 mb-3.5">
+    <div class="card-body p-3.5 gap-2.5">
+      <h2 class="card-title text-xs uppercase tracking-wider opacity-60">마커 추적</h2>
+      <div class="flex items-center gap-2.5">
+        <button id="trackBtn" type="button" class="btn btn-outline btn-primary flex-1" disabled>마커 추적 시작</button>
+        <span class="badge badge-ghost gap-1.5"><span id="trackDot" class="dot"></span><span id="trackText">추적 꺼짐</span></span>
+      </div>
+      <div class="flex items-center gap-3.5">
+        <div id="markerBox" class="bg-base-300 rounded-box shrink-0" style="width:80px;height:80px;">
+          <div id="markerPos" style="left:50%;top:50%;"></div>
+        </div>
+        <div class="text-xs leading-relaxed opacity-80">
+          <div class="flex items-center gap-1.5"><span id="markerDot" class="dot"></span><span id="markerText">—</span></div>
+          <div id="markerIdText">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Connection -->
   <div class="card card-border bg-base-200 mb-3.5">
@@ -178,6 +207,13 @@
   var distNum = $("distNum"), distRange = $("distRange");
   var degNum = $("degNum"), degRange = $("degRange");
   var logEl = $("log"), toastEl = $("toast");
+
+  // ---- Marker tracking ----
+  var trackBtn = $("trackBtn"), trackDot = $("trackDot"), trackText = $("trackText");
+  var markerDot = $("markerDot"), markerText = $("markerText"), markerIdText = $("markerIdText");
+  var markerPos = $("markerPos");
+  var deviceOnline = false;
+  var trackingActive = false;
 
   // ================= WebSocket =================
   var ws = null;
@@ -334,6 +370,10 @@
         updateStatus(msg);
         break;
 
+      case "tracking":
+        updateTracking(msg);
+        break;
+
       case "error":
         stopProcessing();
         logLine("err", "오류: " + String(msg.message == null ? "" : msg.message));
@@ -350,6 +390,7 @@
 
   function updateStatus(msg) {
     var online = !!msg.deviceOnline;
+    deviceOnline = online;
     devDot.className = "dot " + (online ? "on" : "off");
     devText.textContent = online ? "드론 온라인" : "드론 오프라인";
     if (typeof msg.battery === "number") {
@@ -357,6 +398,53 @@
     } else {
       battText.textContent = "\u2014";
     }
+    updateTrackEnabled();
+  }
+
+  function clampUnit(n) {
+    if (typeof n !== "number" || isNaN(n)) return 0.5;
+    if (n < -1) return -1;
+    if (n > 1) return 1;
+    return n;
+  }
+
+  function updateTracking(msg) {
+    var active = !!msg.active;
+    trackingActive = active;
+    trackDot.className = "dot" + (active ? " on" : "");
+    trackText.textContent = active ? "추적 켜짐" : "추적 꺼짐";
+    trackBtn.textContent = active ? "마커 추적 중지" : "마커 추적 시작";
+    trackBtn.classList.toggle("btn-error", active);
+    trackBtn.classList.toggle("btn-outline", !active);
+    trackBtn.classList.toggle("btn-primary", !active);
+
+    if (!active) {
+      markerDot.className = "dot";
+      markerText.textContent = "\u2014";
+      markerIdText.textContent = "\u2014";
+      markerPos.classList.remove("found");
+      updateTrackEnabled();
+      return;
+    }
+
+    var found = !!msg.markerFound;
+    markerDot.className = "dot " + (found ? "on" : "off");
+    markerText.textContent = found ? "마커 발견" : "마커 없음";
+    markerIdText.textContent = (found && typeof msg.markerId === "number") ? ("ID " + msg.markerId) : "\u2014";
+
+    if (found && typeof msg.dx === "number" && typeof msg.dy === "number") {
+      markerPos.style.left = ((clampUnit(msg.dx) + 1) / 2 * 100) + "%";
+      markerPos.style.top = ((clampUnit(msg.dy) + 1) / 2 * 100) + "%";
+      markerPos.classList.add("found");
+    } else {
+      markerPos.classList.remove("found");
+    }
+
+    updateTrackEnabled();
+  }
+
+  function updateTrackEnabled() {
+    trackBtn.disabled = !deviceOnline;
   }
 
   function logParsed(msg) {
@@ -670,6 +758,17 @@
   $("btnTakeoff").addEventListener("click", function () { sendCommand({ action: "takeoff" }); });
   $("btnLand").addEventListener("click", function () { sendCommand({ action: "land" }); });
   $("btnBattery").addEventListener("click", function () { sendCommand({ action: "battery" }); });
+
+  // Marker tracking toggle — the server's `active` field in the "tracking"
+  // message is the source of truth for the button's displayed state (see
+  // updateTracking), so this just requests the opposite of the last known
+  // state rather than driving a separate local click-toggle flag.
+  trackBtn.addEventListener("click", function () {
+    var wantOn = !trackingActive;
+    if (send({ type: "track", on: wantOn })) {
+      logLine("sent", "\u2192 마커 추적 " + (wantOn ? "시작" : "중지"));
+    }
+  });
 
   // Directional moves
   var moveButtons = document.querySelectorAll("[data-move]");

@@ -11,7 +11,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@google/genai": "^2.10.0"
+    "@google/genai": "^2.10.0",
+    "js-aruco2": "^2.0.0"
   },
   "devDependencies": {
     "@types/bun": "^1.1.0",

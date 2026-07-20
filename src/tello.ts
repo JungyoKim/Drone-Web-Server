@@ -30,6 +30,8 @@ export function mapCommand(cmd: DroneCommand): MapResult {
   if (action === "land") return { ok: true, tello: "land", command: { action } };
   if (action === "emergency") return { ok: true, tello: "emergency", command: { action } };
   if (action === "battery") return { ok: true, tello: "battery?", command: { action } };
+  if (action === "streamon") return { ok: true, tello: "streamon", command: { action } };
+  if (action === "streamoff") return { ok: true, tello: "streamoff", command: { action } };
 
   if (MOVE_ACTIONS[action]) {
     const { min, max } = LIMITS.distanceCm;

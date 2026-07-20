@@ -27,7 +27,10 @@ export type DroneAction =
   | "cw"
   | "ccw"
   | "flip"
-  | "battery";
+  | "battery"
+  /** Enable/disable Tello's own video stream (UDP 11111). No args. */
+  | "streamon"
+  | "streamoff";
 
 /** A validated, structured command. `arg` meaning depends on action. */
 export interface DroneCommand {
@@ -46,6 +49,8 @@ export type BrowserToServer =
   | { type: "audio"; mime: string; audio: string }
   /** Direct button press bypassing voice (e.g. UI land). */
   | { type: "command"; command: DroneCommand }
+  /** Start/stop ArUco-marker-follow mode (drives streamon/off + a continuous rc loop). */
+  | { type: "track"; on: boolean }
   /** Liveness. */
   | { type: "ping" };
 
@@ -58,6 +63,8 @@ export type ServerToBrowser =
   | { type: "tello"; command: DroneCommand; response: string; ok: boolean }
   /** Device connectivity + battery for the UI header. */
   | { type: "status"; deviceOnline: boolean; battery: number | null }
+  /** ArUco tracking telemetry, broadcast a few times a second while active. */
+  | { type: "tracking"; active: boolean; markerFound: boolean; markerId?: number; dx?: number; dy?: number; sizeRatio?: number; rc?: { a: number; b: number; c: number; d: number } }
   /** Recoverable error surfaced to the user. */
   | { type: "error"; message: string }
   | { type: "pong" };
@@ -80,6 +87,10 @@ export type ServerToDevice =
   | { type: "welcome"; ok: boolean; message?: string }
   /** Dispatch a raw Tello SDK string. id correlates the eventual result. */
   | { type: "command"; id: number; tello: string; meta: DroneCommand }
+  /** Continuous joystick-style control for tracking mode. Fire-and-forget --
+   * Tello does NOT reply "ok" to `rc`, so this never touches the pending map.
+   * Each channel is -100..100 (RC.min/RC.max); send `rc 0 0 0 0` to stop. */
+  | { type: "rc"; a: number; b: number; c: number; d: number }
   | { type: "ping" };
 
 // ---------- Limits (single source of truth; mirrored in firmware) ----------
@@ -90,3 +101,6 @@ export const LIMITS = {
   /** Idle keepalive interval the ESP32 uses to dodge the 15s auto-land. */
   keepaliveMs: 5000,
 } as const;
+
+/** `rc a b c d` channel range (roll/pitch/throttle/yaw), per the Tello SDK. */
+export const RC = { min: -100, max: 100 } as const;

@@ -34,6 +34,7 @@ graph LR
 | `src/server.ts` | Bun HTTP + dual WebSocket server (`/ws/browser`, `/ws/device`), relay + status. |
 | `src/gemini.ts` | Audio → one `control_drone` function call (Gemini). |
 | `src/tello.ts` | Command validation + mapping to Tello SDK strings; reply parsing. |
+| `src/tracking.ts` | ArUco detection (video ingest, ffmpeg decode, steering law) for marker-follow. |
 | `src/*.test.ts` | Unit (mapping) + end-to-end plumbing (real subprocess, simulated browser+device). |
 | `public/index.html` | Self-contained mobile web app (mic, controls, emergency LAND, status). |
 | `firmware/` | PlatformIO ESP32-S3 project. See `firmware/README.md`. |
@@ -87,7 +88,67 @@ command that joins the drone to the phone hotspot in station mode.
 ## Command set
 
 `takeoff`, `land`, `emergency`, `up/down/left/right/forward/back {20–500 cm}`,
-`cw/ccw {1–360°}`, `flip {l/r/f/b}`, `battery?`. Out-of-range args are rejected
-(not clamped) before dispatch — the drone never flies a distance you didn't say.
+`cw/ccw {1–360°}`, `flip {l/r/f/b}`, `battery?`, `streamon`/`streamoff` (used
+internally by marker-follow, not exposed as a voice command). Out-of-range args
+are rejected (not clamped) before dispatch — the drone never flies a distance
+you didn't say.
+
+## ArUco marker-follow
+
+A second, independent control mode: the browser toggles it on/off (`{type:
+"track", on}`); the drone then autonomously turns/climbs/moves to keep a
+detected ArUco marker centered and at a set distance, using continuous `rc`
+joystick commands instead of the discrete move commands above.
+
+```mermaid
+graph LR
+  T[Tello] -->|UDP 11111<br/>H.264| E[ESP32-S3]
+  E -->|UDP, verbatim relay| S[Backend]
+  S -->|ffmpeg decode| F[raw RGBA frames]
+  F -->|js-aruco2| D[marker corners]
+  D -->|src/tracking.ts<br/>computeSteering| RC[rc a b c d]
+  RC -->|wss, 10 Hz, fire-and-forget| E
+  E -->|UDP 8889| T
+  S -.tracking status.-> B[Phone browser]
+```
+
+- **Video is out of band.** Tello's H.264 stream never touches the WS JSON
+  protocol — the ESP32 relays raw UDP packets verbatim to the backend's
+  `VIDEO_PORT` (default 8890), which decodes with `ffmpeg` and detects markers
+  with `js-aruco2` (pure JS, no native OpenCV build). See `src/tracking.ts`.
+- **`rc` never uses the reply-waiting dispatch path.** Tello does not ack `rc`
+  the way it acks other commands, so it's a fire-and-forget send at a fixed
+  10 Hz, independent of decode frame rate, with a 500 ms staleness failsafe
+  (no fresh frame → `rc 0 0 0 0`, never repeat a stale command).
+- **Any interruption stops it.** Emergency button, a manual command/voice
+  sequence, `{type:"track",on:false}`, or the device disconnecting all zero the
+  rc channels and call `streamoff` — same interrupt-on-new-input principle as
+  the multi-command voice sequencer (`abortSequence()` / `stopTracking()`).
+- **Gains are deliberately gentle and signed.** `TRACK_MAX_RC` (default 35, of
+  a possible ±100) caps every channel; `TRACK_YAW_GAIN`/`TRACK_ALT_GAIN`/
+  `TRACK_DIST_GAIN` are plain multipliers — **if the drone turns/climbs/moves
+  the wrong way on first test, flip that gain's sign in `.env`**, no code
+  change needed. `ARUCO_TARGET_SIZE_PX` sets the follow distance (bigger =
+  closer); tune empirically against your printed marker's real size.
+- **v1 has no lateral strafe** (`rc`'s `a`/roll channel is always 0) — yaw
+  alone re-centers horizontally, to avoid uncommanded sideways drift.
+
+### ⚠️ Unverified before a real flight
+
+1. **`streamon` while Tello is in station mode is not confirmed reliable.**
+   Tello's video pipeline is best-documented in its own AP mode; behavior when
+   joined to the ESP32's soft-AP (our setup) is community-reported as
+   inconsistent, not officially guaranteed. **Test this first, in isolation:**
+   toggle tracking on and confirm `markerFound` telemetry ever arrives (even
+   `false` — it proves frames are decoding) before trusting the follow
+   behavior. If no `tracking` message ever updates past the initial
+   `{active:true, markerFound:false}`, video isn't reaching the detector —
+   check `VIDEO_HOST`/`VIDEO_PORT` match on both ends and that the firmware
+   log shows packets being relayed.
+2. **Sign conventions for `rc`'s roll/pitch/throttle/yaw are unverified** —
+   flip gain signs per-channel after watching the first real attempt.
+3. **Fly over a soft/open area with prop guards on the first test.** Start
+   with `TRACK_MAX_RC` low (e.g. 15–20) until the loop's behavior is confirmed
+   sane, then raise it.
 
 # Drone-Web-Server
