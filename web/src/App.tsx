@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
 import { useDroneSocket } from "@/hooks/useDroneSocket";
 
 const NAV_LINKS = [
-  { to: "/voice", label: "\uc74c\uc131 / \uc218\ub3d9" },
+  { to: "/voice", label: "\uc74c\uc131" },
+  { to: "/manual", label: "\uc218\ub3d9" },
   { to: "/track", label: "\ub9c8\ucee4 \ucd94\uc801" },
 ] as const;
 
@@ -55,12 +56,11 @@ export default function App() {
             <Route path="/" element={<Navigate to="/voice" replace />} />
             <Route
               path="/voice"
-              element={
-                <div className="flex flex-col gap-4">
-                  <VoiceRecorder onAudio={ds.sendAudio} disabled={controlsDisabled} />
-                  <ManualControls onCommand={ds.sendCommand} disabled={controlsDisabled} />
-                </div>
-              }
+              element={<VoiceRecorder onAudio={ds.sendAudio} disabled={controlsDisabled} />}
+            />
+            <Route
+              path="/manual"
+              element={<ManualControls onCommand={ds.sendCommand} disabled={controlsDisabled} />}
             />
             <Route
               path="/track"
