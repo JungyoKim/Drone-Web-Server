@@ -43,7 +43,7 @@ export default function TrackingPanel({ tracking, deviceOnline, onToggle }: Trac
             variant={active ? "destructive" : "default"}
             size="lg"
             className="flex-1"
-            disabled={!deviceOnline}
+            isDisabled={!deviceOnline}
             onClick={() => onToggle(!active)}
           >
             {active ? "마커 추적 중지" : "마커 추적 시작"}

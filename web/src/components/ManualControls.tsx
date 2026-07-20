@@ -91,7 +91,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
       {/* Emergency LAND — immediate, distinct from the normal 착륙 button below. */}
       <Button
         type="button"
-        disabled={disabled}
+        isDisabled={disabled}
         onClick={() => onCommand({ action: "land" })}
         className="flex h-16 w-full flex-col gap-0.5 whitespace-normal bg-destructive text-xl font-extrabold uppercase tracking-wider text-white hover:bg-destructive/90"
       >
@@ -116,7 +116,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             <Button
               type="button"
               size="lg"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "takeoff" })}
               className="h-12 flex-col gap-0.5 bg-emerald-600 text-white hover:bg-emerald-600/90"
             >
@@ -126,7 +126,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             <Button
               type="button"
               size="lg"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "land" })}
               className="h-12 flex-col gap-0.5 bg-amber-600 text-white hover:bg-amber-600/90"
             >
@@ -136,7 +136,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             <Button
               type="button"
               size="lg"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "battery" })}
               className="h-12 flex-col gap-0.5 bg-sky-600 text-white hover:bg-sky-600/90"
             >
@@ -170,9 +170,9 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             <span>cm</span>
             <Slider
               value={distance.value}
-              onValueChange={distance.onSliderChange}
-              min={DIST_MIN}
-              max={DIST_MAX}
+              onChange={distance.onSliderChange}
+              minValue={DIST_MIN}
+              maxValue={DIST_MAX}
               step={DIST_STEP}
               className="flex-1"
             />
@@ -182,7 +182,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
           <div className="grid grid-cols-3 grid-rows-3 gap-2.5">
             <Button
               type="button"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "forward", distance: distance.value })}
               className="col-start-2 row-start-1 h-14 flex-col gap-0.5"
               variant="secondary"
@@ -192,7 +192,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             </Button>
             <Button
               type="button"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "left", distance: distance.value })}
               className="col-start-1 row-start-2 h-14 flex-col gap-0.5"
               variant="secondary"
@@ -202,7 +202,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             </Button>
             <Button
               type="button"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "right", distance: distance.value })}
               className="col-start-3 row-start-2 h-14 flex-col gap-0.5"
               variant="secondary"
@@ -212,7 +212,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             </Button>
             <Button
               type="button"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "back", distance: distance.value })}
               className="col-start-2 row-start-3 h-14 flex-col gap-0.5"
               variant="secondary"
@@ -226,7 +226,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
           <div className="grid grid-cols-2 gap-2.5">
             <Button
               type="button"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "up", distance: distance.value })}
               className="h-12"
               variant="secondary"
@@ -235,7 +235,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             </Button>
             <Button
               type="button"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "down", distance: distance.value })}
               className="h-12"
               variant="secondary"
@@ -269,9 +269,9 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             <span>°</span>
             <Slider
               value={degree.value}
-              onValueChange={degree.onSliderChange}
-              min={DEG_MIN}
-              max={DEG_MAX}
+              onChange={degree.onSliderChange}
+              minValue={DEG_MIN}
+              maxValue={DEG_MAX}
               step={DEG_STEP}
               className="flex-1"
             />
@@ -281,7 +281,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
           <div className="grid grid-cols-2 gap-2.5">
             <Button
               type="button"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "ccw", degree: degree.value })}
               className="h-14"
               variant="secondary"
@@ -291,7 +291,7 @@ export default function ManualControls({ onCommand, disabled = false }: ManualCo
             </Button>
             <Button
               type="button"
-              disabled={disabled}
+              isDisabled={disabled}
               onClick={() => onCommand({ action: "cw", degree: degree.value })}
               className="h-14"
               variant="secondary"

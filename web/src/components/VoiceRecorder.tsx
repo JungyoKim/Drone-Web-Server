@@ -252,7 +252,7 @@ export default function VoiceRecorder({ onAudio, disabled = false }: VoiceRecord
       <Button
         type="button"
         variant="outline"
-        disabled={isInert}
+        isDisabled={isInert}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
