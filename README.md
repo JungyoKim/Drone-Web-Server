@@ -258,6 +258,31 @@ bookkeeping, the grid you drew *is* the marker.
   whether Tello is sending anything to the ESP32 at all before suspecting the
   ESP32 → backend leg.
 
+### Known limitation: detection fails completely under heavy motion blur
+
+Stress-tested js-aruco2 directly (real decode + detect, not just reasoning
+about the algorithm) against compression, camera angle, marker distance, and
+blur, independently and combined:
+
+| condition | detection rate |
+|---|---|
+| baseline | 100% |
+| light blur | 97.8% |
+| low-bitrate compression (800kbps, Tello-ish) | 100% |
+| off-angle camera | 100% |
+| small marker (2.5x farther) | 100% |
+| tiny marker (5x farther) | 100% |
+| small + light blur + low bitrate combined | 100% |
+| **heavy motion blur** | **0%** |
+
+Compression, angle, and distance are all robust. Heavy blur is a hard,
+binary failure — not js-aruco2-specific, it's inherent to any ArUco-style
+detector (OpenCV's own C++ implementation has the identical weakness):
+sharp black/white edge contrast is required to find marker candidates at
+all, and blur destroys exactly that. Already covered by the existing
+staleness failsafe (`STEERING_STALE_MS`, 500 ms → `rc 0 0 0 0`) — a blurry
+moment means "stop and wait for a clean frame," not "steer off garbage."
+
 ### ⚠️ Unverified before a real flight
 
 1. **Sign conventions for `rc`'s roll/pitch/throttle/yaw are unverified** —
