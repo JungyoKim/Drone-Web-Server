@@ -48,6 +48,10 @@ export interface DroneSocketState {
   log: LogEntry[];
   processing: boolean;
   lastTranscript: string | null;
+  /** Has a WebSocket connection ever succeeded this session (see the field's
+   * own comment above the useState for why "disconnected" alone isn't
+   * enough to tell a bad token from a routine retry). */
+  everConnected: boolean;
 }
 
 function tokenFromUrl(): string {
@@ -103,6 +107,14 @@ export function useDroneSocket() {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [processing, setProcessing] = useState(false);
   const [lastTranscript, setLastTranscript] = useState<string | null>(null);
+  // Has this session EVER seen a successful open? A bad token on the
+  // BROWSER endpoint is rejected at the HTTP upgrade (401) before any
+  // WebSocket handshake completes, so it closes with code 1006 (abnormal),
+  // NOT 1008 -- unlike the device endpoint's post-upgrade hello-frame
+  // rejection. That means "disconnected" alone can't distinguish "bad
+  // token, will never work" from "one dropped frame, retrying fine" -- this
+  // flag is what actually lets the UI know a fresh token has never worked.
+  const [everConnected, setEverConnected] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelayRef = useRef(RECONNECT_MIN);
@@ -275,6 +287,7 @@ export function useDroneSocket() {
     ws.onopen = () => {
       reconnectDelayRef.current = RECONNECT_MIN;
       setConn("connected");
+      setEverConnected(true);
       appendLog("info", "백엔드에 연결됨");
       saveToken(tokenRef.current.trim()); // remember a working token for next visit
       startPing();
@@ -306,7 +319,14 @@ export function useDroneSocket() {
     connect();
   }, [connect]);
 
-  const setToken = useCallback((t: string) => setTokenState(t), []);
+  // Updates tokenRef synchronously (not just via the render-body assignment
+  // above) so a caller that does setToken(x) immediately followed by
+  // connect() -- e.g. the connect dialog's submit -- reads the NEW token,
+  // not a stale one from before this render's state update lands.
+  const setToken = useCallback((t: string) => {
+    tokenRef.current = t;
+    setTokenState(t);
+  }, []);
 
   // Auto-connect on mount if we already have a token (URL param / cookie).
   useEffect(() => {
@@ -378,6 +398,7 @@ export function useDroneSocket() {
     log,
     processing,
     lastTranscript,
+    everConnected,
   };
 
   return { state, token, setToken, connect: reconnectNow, sendCommand, sendAudio, setTrack };
