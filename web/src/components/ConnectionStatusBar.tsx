@@ -67,19 +67,25 @@ export default function ConnectionStatusBar({
           <Radio className={cn("size-3.5", deviceOnline ? TONE_CLASSES.ok : TONE_CLASSES.off)} />
         </ItemMedia>
         <ItemContent>
-          <ItemTitle className="text-xs">{deviceOnline ? "드론 온라인" : "드론 오프라인"}</ItemTitle>
-          {battery !== null && (
-            <ItemDescription
-              className={cn("text-[10px]", lowBattery && "font-semibold text-amber-500")}
-            >
-              {lowBattery ? (
-                <BatteryLow className="inline size-3 align-[-1px]" />
-              ) : (
-                <BatteryFull className="inline size-3 align-[-1px]" />
-              )}{" "}
-              {battery}%
-            </ItemDescription>
-          )}
+          <ItemTitle className="flex items-center gap-1 text-xs">
+            <span>{deviceOnline ? "드론 온라인" : "드론 오프라인"}</span>
+            {battery !== null && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-0.5 font-normal",
+                  lowBattery && "font-semibold text-amber-500",
+                )}
+              >
+                {lowBattery ? (
+                  <BatteryLow className="size-3" />
+                ) : (
+                  <BatteryFull className="size-3" />
+                )}
+                {battery}%
+              </span>
+            )}
+          </ItemTitle>
+          <ItemDescription className="text-[10px]">드론</ItemDescription>
         </ItemContent>
       </Item>
 
