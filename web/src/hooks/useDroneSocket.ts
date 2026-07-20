@@ -123,6 +123,14 @@ export function useDroneSocket() {
   const manualCloseRef = useRef(false);
   const tokenRef = useRef(token);
   tokenRef.current = token;
+  /** Last-seen tracking active/markerFound, so the "tracking" handler can
+   * log state TRANSITIONS (started/stopped, marker found/lost) instead of
+   * spamming a line per frame -- tracking telemetry arrives many times a
+   * second while active. */
+  const prevTrackingRef = useRef<{ active: boolean; markerFound: boolean }>({
+    active: false,
+    markerFound: false,
+  });
 
   const appendLog = useCallback((kind: LogKind, text: string) => {
     setLog((prev) => {
@@ -212,16 +220,33 @@ export function useDroneSocket() {
           setBattery(typeof msg.battery === "number" ? msg.battery : null);
           return;
 
-        case "tracking":
+        case "tracking": {
+          const active = !!msg.active;
+          const markerFound = !!msg.markerFound;
+          const prev = prevTrackingRef.current;
+
+          if (active !== prev.active) {
+            appendLog("info", active ? "마커 추적 시작됨" : "마커 추적 중지됨");
+          } else if (active && markerFound !== prev.markerFound) {
+            appendLog(
+              markerFound ? "ok" : "info",
+              markerFound
+                ? `마커 발견${typeof msg.markerId === "number" ? ` (ID: ${msg.markerId})` : ""}`
+                : "마커 놓침",
+            );
+          }
+          prevTrackingRef.current = { active, markerFound };
+
           setTracking({
-            active: !!msg.active,
-            markerFound: !!msg.markerFound,
+            active,
+            markerFound,
             markerId: msg.markerId,
             dx: msg.dx ?? 0,
             dy: msg.dy ?? 0,
             sizeRatio: msg.sizeRatio,
           });
           return;
+        }
 
         case "error":
           setProcessing(false);
