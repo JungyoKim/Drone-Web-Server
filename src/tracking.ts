@@ -146,6 +146,234 @@ export function computeSteering(
   return { markerFound: true, markerId, dx, dy, sizeRatio, rc: { a, b, c, d } };
 }
 
+// ---------- Live camera preview (independent of ArUco detection) ----------
+
+/**
+ * Incrementally splits a concatenated MJPEG byte stream (ffmpeg's `-f mjpeg`
+ * output: back-to-back JPEG images, each starting with SOI 0xFFD8 and ending
+ * with EOI 0xFFD9) into complete frames. Pure -- no I/O -- so it's
+ * unit-testable with hand-built buffers, mirroring computeSteering /
+ * pickTargetMarker above.
+ *
+ * `pending` is leftover bytes from a previous call (a partial trailing frame,
+ * or a lone 0xFF that might be the first byte of a marker split across the
+ * chunk boundary); `chunk` is the newly arrived bytes. Returns every complete
+ * frame found (SOI..EOI inclusive, in arrival order) plus the new `rest` to
+ * pass into the next call. Bytes before the first SOI are dropped silently
+ * (stream garbage / mid-frame ffmpeg startup) rather than ever surfaced as a
+ * "frame".
+ */
+export function splitJpegFrames(pending: Uint8Array, chunk: Uint8Array): { frames: Uint8Array[]; rest: Uint8Array } {
+  let buf: Uint8Array;
+  if (pending.length === 0) buf = chunk;
+  else {
+    buf = new Uint8Array(pending.length + chunk.length);
+    buf.set(pending, 0);
+    buf.set(chunk, pending.length);
+  }
+
+  const frames: Uint8Array[] = [];
+  let from = 0;
+  while (true) {
+    const soi = indexOfMarker(buf, 0xff, 0xd8, from);
+    if (soi === -1) {
+      // No full SOI in what's left. A trailing lone 0xFF could be the first
+      // half of a marker split across this chunk boundary -- keep it.
+      const rest = buf.length > 0 && buf[buf.length - 1] === 0xff ? buf.subarray(buf.length - 1) : new Uint8Array(0);
+      return { frames, rest };
+    }
+    const eoi = indexOfMarker(buf, 0xff, 0xd9, soi + 2);
+    if (eoi === -1) return { frames, rest: buf.subarray(soi) }; // incomplete tail frame -- wait for more
+    frames.push(buf.slice(soi, eoi + 2)); // copy -- must outlive this buffer
+    from = eoi + 2;
+  }
+}
+
+function indexOfMarker(buf: Uint8Array, b0: number, b1: number, from: number): number {
+  for (let i = from; i < buf.length - 1; i++) {
+    if (buf[i] === b0 && buf[i + 1] === b1) return i;
+  }
+  return -1;
+}
+
+/** Preview encode configuration. Pure data, mirrors SteeringConfig's style. */
+export interface PreviewConfig {
+  /** Output width in px; height auto-scales (ffmpeg `scale=W:-2`) to
+   * preserve the source aspect ratio, rounded to stay even as JPEG/YUV
+   * encoding requires. */
+  width: number;
+  /** ffmpeg `-q:v` for the MJPEG output: 2 (best) .. 31 (worst). */
+  quality: number;
+  /** Upper bound on frames forwarded via onFrame per second, independent of
+   * ffmpeg's actual decode rate -- so a fast decoder can't flood the link
+   * to the browser. */
+  maxFps: number;
+}
+
+/**
+ * Manages one live JPEG-preview session: spawns its OWN ffmpeg process
+ * (independent of TrackingSession's rawvideo/ArUco decode -- the same H.264
+ * bytes are fed to both) that decodes the H.264 elementary stream and
+ * re-encodes it as MJPEG, splits that into individual JPEG frames via
+ * splitJpegFrames(), rate-limits to cfg.maxFps, and invokes onFrame per
+ * frame. Purely a "camera view" for the UI -- entirely independent of (and
+ * never blocks) the ArUco steering path. Never throws out of
+ * start()/feedVideoChunk()/stop() -- catches and reports via onError.
+ */
+export class VideoPreviewSession {
+  private readonly cfg: PreviewConfig;
+  private readonly onFrame: (jpeg: Uint8Array) => void;
+  private readonly onError: (e: Error) => void;
+
+  private proc: Bun.Subprocess<"pipe", "pipe", "ignore"> | null = null;
+  private started = false;
+  private pending: Uint8Array = new Uint8Array(0);
+  private lastEmitAtMs = 0;
+
+  constructor(cfg: PreviewConfig, onFrame: (jpeg: Uint8Array) => void, onError?: (e: Error) => void) {
+    this.cfg = cfg;
+    this.onFrame = onFrame;
+    this.onError = onError ?? (() => {});
+  }
+
+  /** Spawns ffmpeg. Idempotent -- calling start() while already started is a no-op. */
+  start(): void {
+    if (this.started) {
+      console.log("[preview] start() called while already started -- ignoring");
+      return;
+    }
+    try {
+      const proc = Bun.spawn({
+        cmd: [
+          "ffmpeg",
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          // ffmpeg's `-f h264` demuxer defaults to a 5,000,000-byte probe
+          // before it commits to processing ANY input -- for a live,
+          // continuously-fed pipe (never reaching that much data quickly,
+          // and never hitting EOF until the session ends) this means ffmpeg
+          // silently withholds ALL output until stdin closes. Verified
+          // empirically (incl. against the real production Docker image):
+          // shrinking the probe window cuts that stall from ~3s to ~1.2s,
+          // after which frames flow continuously. See the same fix on
+          // TrackingSession below -- it has the identical characteristic.
+          "-probesize",
+          "32768",
+          "-analyzeduration",
+          "0",
+          "-f",
+          "h264",
+          "-i",
+          "pipe:0",
+          "-vf",
+          `scale=${this.cfg.width}:-2`,
+          "-f",
+          "mjpeg",
+          "-q:v",
+          String(this.cfg.quality),
+          "-an",
+          "pipe:1",
+        ],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      this.proc = proc;
+      this.pending = new Uint8Array(0);
+      this.lastEmitAtMs = 0;
+      this.started = true;
+      this.pumpStdout(proc.stdout);
+
+      proc.exited
+        .then((code) => {
+          if (this.started) {
+            console.log(`[preview] ffmpeg exited unexpectedly (code ${code})`);
+            this.stop();
+          }
+        })
+        .catch((err) => this.reportError(err));
+    } catch (err) {
+      this.reportError(err);
+      this.proc = null;
+      this.started = false;
+    }
+  }
+
+  private async pumpStdout(stdout: ReadableStream<Uint8Array>): Promise<void> {
+    const reader = stdout.getReader();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!this.started) break;
+        if (!value) continue;
+        const { frames, rest } = splitJpegFrames(this.pending, value);
+        this.pending = rest;
+        for (const frame of frames) this.maybeEmit(frame);
+      }
+    } catch (err) {
+      if (this.started) this.reportError(err);
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  private maybeEmit(frame: Uint8Array): void {
+    const minIntervalMs = this.cfg.maxFps > 0 ? 1000 / this.cfg.maxFps : 0;
+    const now = Date.now();
+    if (now - this.lastEmitAtMs < minIntervalMs) return; // over budget -- drop, never queue/replay stale frames
+    this.lastEmitAtMs = now;
+    try {
+      this.onFrame(frame);
+    } catch (err) {
+      this.reportError(err);
+    }
+  }
+
+  /** Raw bytes from the ESP32's UDP video relay -- write to ffmpeg's stdin.
+   * No-op if not started. Never throws -- self-heals by tearing down the
+   * wedged process; the next start() respawns fresh. */
+  feedVideoChunk(chunk: Uint8Array): void {
+    if (!this.started || !this.proc) return;
+    const stdin = this.proc.stdin;
+    if (!stdin || typeof stdin === "number") return;
+    try {
+      stdin.write(chunk);
+      stdin.flush();
+    } catch (err) {
+      this.reportError(err);
+      this.stop();
+    }
+  }
+
+  /** Kills the ffmpeg subprocess. Idempotent -- safe to call multiple times
+   * or when never started. */
+  stop(): void {
+    this.started = false;
+    const proc = this.proc;
+    this.proc = null;
+    this.pending = new Uint8Array(0);
+    if (proc) {
+      try {
+        proc.kill();
+      } catch (err) {
+        this.reportError(err);
+      }
+    }
+  }
+
+  private reportError(err: unknown): void {
+    const e = err instanceof Error ? err : new Error(String(err));
+    try {
+      this.onError(e);
+    } catch {
+      // onError itself must never propagate -- swallow.
+    }
+  }
+}
+
+
 /**
  * Manages one live tracking session end to end: spawns ffmpeg to decode a raw
  * H.264 Annex-B elementary stream fed incrementally via feedVideoChunk(), runs
@@ -185,6 +413,15 @@ export class TrackingSession {
           "-hide_banner",
           "-loglevel",
           "error",
+          // Same ffmpeg pipe-stalls-until-EOF characteristic as
+          // VideoPreviewSession above -- see its comment for the full
+          // explanation. Without this, marker tracking would never see a
+          // decoded frame until the session stopped (streamoff), making
+          // "tracking" mode a total no-op against a live feed.
+          "-probesize",
+          "32768",
+          "-analyzeduration",
+          "0",
           "-f",
           "h264",
           "-i",

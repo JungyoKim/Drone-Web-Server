@@ -75,12 +75,15 @@ For an integrated production-like preview on one port (matching how Docker
 actually deploys it):
 
 ```bash
-cd web && bun run build   # tsc -b && vite build -> ../public/
-cd .. && bun run start    # backend now serves the built UI from public/
+cd web && bun run build   # tsc -b && vite build -> web/dist/ (vite's default outDir)
+cd .. && rm -rf public && cp -r web/dist public   # match the Dockerfile's copy step
+bun run start             # backend now serves the built UI from public/
 ```
 
-`public/` is gitignored — it's pure build output (the Dockerfile's first
-stage produces it fresh; see below).
+`public/` is gitignored — it's pure build output. In the Docker image this
+copy is the multi-stage build's job (`COPY --from=web-build /app/web/dist
+./public`, see below); for a local one-port preview you do it by hand as
+above -- vite does NOT write directly to `../public/`.
 
 ### Production (secure context)
 
@@ -141,27 +144,60 @@ joystick commands instead of the discrete move commands above.
 ```mermaid
 graph LR
   T[Tello] -->|UDP 11111<br/>H.264| E[ESP32-S3]
-  E -->|UDP, verbatim relay| S[Backend]
+  E -->|UDP, verbatim relay| S[Backend :VIDEO_PORT]
   S -->|ffmpeg decode| F[raw RGBA frames]
   F -->|js-aruco2| D[marker corners]
   D -->|src/tracking.ts<br/>computeSteering| RC[rc a b c d]
   RC -->|wss, 10 Hz, fire-and-forget| E
   E -->|UDP 8889| T
-  S -.tracking status.-> B[Phone browser]
+  S -->|2nd ffmpeg: scale+mjpeg| J[JPEG frames]
+  J -.wss, up to VIDEO_PREVIEW_MAX_FPS.-> B[Phone browser]
+  S -.tracking status.-> B
 ```
 
-- **Video is out of band.** Tello's H.264 stream never touches the WS JSON
-  protocol — the ESP32 relays raw UDP packets verbatim to the backend's
-  `VIDEO_PORT` (default 8890), which decodes with `ffmpeg` and detects markers
-  with `js-aruco2` (pure JS, no native OpenCV build). See `src/tracking.ts`.
+- **Video is out of band, and needs its OWN port reachable.** Tello's H.264
+  stream never touches the WS JSON protocol — the ESP32 sends raw UDP packets
+  directly to the backend's `VIDEO_PORT` (default 8890), independent of the
+  `wss` connection entirely. **This means `VIDEO_PORT` must be reachable from
+  the ESP32 as its own UDP port** — a typical reverse-proxy domain mapping
+  (Dokploy/Traefik, etc.) only forwards the HTTP(S)/`wss` port and does *not*
+  cover this. See the Dockerfile's `EXPOSE 8890/udp` comment for exactly what
+  to configure at the host/platform level; voice and manual control don't
+  need this (they're `wss`-only), only tracking/preview do.
+- **Two independent ffmpeg processes consume the same UDP bytes.** One
+  (`TrackingSession`) decodes to raw RGBA for `js-aruco2` marker detection;
+  the other (`VideoPreviewSession`) scales + re-encodes to JPEG for the
+  browser's live camera view. Neither depends on the other; killing/failing
+  one never affects the other. See `src/tracking.ts`.
+- **Live camera preview.** While tracking is active, the backend also pushes
+  `{type:"frame", jpeg: <base64>}` over the same browser `wss` connection —
+  no extra port, no WebRTC. Tunable via `VIDEO_PREVIEW_WIDTH` (output px
+  width, aspect-preserved), `VIDEO_PREVIEW_QUALITY` (ffmpeg `-q:v`), and
+  `VIDEO_PREVIEW_MAX_FPS` (forwarding rate cap, independent of ffmpeg's
+  actual decode rate). The frontend renders it with a plain `<img>`, updated
+  imperatively outside React state so a ~10fps feed never re-renders the rest
+  of the UI (see `useDroneSocket`'s `onFrame` subscription).
+- **ffmpeg silently withholds ALL piped output until its input closes,
+  by default.** This is a real ffmpeg characteristic (verified against the
+  actual production `oven/bun:1.3-alpine` image, not a dev-machine quirk):
+  fed via a live, indefinitely-open pipe (never hitting EOF), ffmpeg's
+  default ~5MB input probe means it decodes/encodes NOTHING until that much
+  data has arrived — which never happens for a continuous video feed. Both
+  ffmpeg invocations in `src/tracking.ts` pass `-probesize 32768
+  -analyzeduration 0` to cut this from an indefinite stall down to a ~1
+  second warm-up, after which frames flow continuously. Don't remove these
+  flags without re-verifying end-to-end with a real, unbounded feed (a short
+  test file that finishes and closes stdin will look fine either way and
+  mask a regression here).
 - **`rc` never uses the reply-waiting dispatch path.** Tello does not ack `rc`
   the way it acks other commands, so it's a fire-and-forget send at a fixed
   10 Hz, independent of decode frame rate, with a 500 ms staleness failsafe
   (no fresh frame → `rc 0 0 0 0`, never repeat a stale command).
 - **Any interruption stops it.** Emergency button, a manual command/voice
   sequence, `{type:"track",on:false}`, or the device disconnecting all zero the
-  rc channels and call `streamoff` — same interrupt-on-new-input principle as
-  the multi-command voice sequencer (`abortSequence()` / `stopTracking()`).
+  rc channels, call `streamoff`, and tear down both ffmpeg sessions — same
+  interrupt-on-new-input principle as the multi-command voice sequencer
+  (`abortSequence()` / `stopTracking()`).
 - **Gains are deliberately gentle and signed.** `TRACK_MAX_RC` (default 35, of
   a possible ±100) caps every channel; `TRACK_YAW_GAIN`/`TRACK_ALT_GAIN`/
   `TRACK_DIST_GAIN` are plain multipliers — **if the drone turns/climbs/moves
@@ -173,16 +209,22 @@ graph LR
 
 ### ⚠️ Unverified before a real flight
 
-1. **`streamon` while Tello is in station mode is not confirmed reliable.**
-   Tello's video pipeline is best-documented in its own AP mode; behavior when
-   joined to the ESP32's soft-AP (our setup) is community-reported as
-   inconsistent, not officially guaranteed. **Test this first, in isolation:**
-   toggle tracking on and confirm `markerFound` telemetry ever arrives (even
-   `false` — it proves frames are decoding) before trusting the follow
-   behavior. If no `tracking` message ever updates past the initial
-   `{active:true, markerFound:false}`, video isn't reaching the detector —
-   check `VIDEO_HOST`/`VIDEO_PORT` match on both ends and that the firmware
-   log shows packets being relayed.
+1. **`streamon` while Tello is in station mode, from the REAL drone, is not
+   confirmed reliable.** Tello's video pipeline is best-documented in its own
+   AP mode; behavior when joined to the ESP32's soft-AP (our setup) is
+   community-reported as inconsistent, not officially guaranteed. (The decode
+   pipeline itself — UDP relay → ffmpeg → js-aruco2/JPEG, including the
+   ffmpeg-stalls-until-EOF fix above — IS verified end-to-end against a real,
+   continuous, synthetic H.264 feed; what's unverified is specifically
+   whether the real Tello actually emits its stream reliably once joined to
+   the ESP32's AP.) **Test this first, in isolation:** toggle tracking on and
+   confirm `markerFound` telemetry (or a live preview frame) ever arrives —
+   even `markerFound:false` proves frames are decoding. If neither a
+   `tracking` update past the initial `{active:true, markerFound:false}` nor
+   a `frame` message ever arrives, video isn't reaching the detector — check
+   `VIDEO_HOST`/`VIDEO_PORT` match on both ends, that `VIDEO_PORT` is actually
+   reachable from the ESP32 (see the port-forwarding note above), and that
+   the firmware log shows packets being relayed.
 2. **Sign conventions for `rc`'s roll/pitch/throttle/yaw are unverified** —
    flip gain signs per-channel after watching the first real attempt.
 3. **Fly over a soft/open area with prop guards on the first test.** Start

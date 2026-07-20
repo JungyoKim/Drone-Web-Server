@@ -132,6 +132,14 @@ export function useDroneSocket() {
     markerFound: false,
   });
 
+  /** Live camera preview frame subscribers. A plain ref-backed Set (not
+   * React state) on purpose: "frame" messages arrive up to
+   * VIDEO_PREVIEW_MAX_FPS times/sec, and routing that through setState would
+   * re-render every consumer of this hook's whole `state` object at that
+   * rate. Subscribers (see onFrame below) get called directly and update
+   * the DOM imperatively (e.g. an <img> ref), never touching React state. */
+  const frameListenersRef = useRef<Set<(jpegBase64: string) => void>>(new Set());
+
   const appendLog = useCallback((kind: LogKind, text: string) => {
     setLog((prev) => {
       const next = [...prev, { id: nextLogId++, ts: Date.now(), kind, text }];
@@ -247,6 +255,10 @@ export function useDroneSocket() {
           });
           return;
         }
+
+        case "frame":
+          for (const cb of frameListenersRef.current) cb(msg.jpeg);
+          return;
 
         case "error":
           setProcessing(false);
@@ -414,6 +426,16 @@ export function useDroneSocket() {
     [send, appendLog],
   );
 
+  /** Subscribes to live camera preview frames (base64 JPEG, no `data:`
+   * prefix); returns an unsubscribe function. See frameListenersRef above
+   * for why this bypasses React state entirely. */
+  const onFrame = useCallback((cb: (jpegBase64: string) => void) => {
+    frameListenersRef.current.add(cb);
+    return () => {
+      frameListenersRef.current.delete(cb);
+    };
+  }, []);
+
   const state: DroneSocketState = {
     connState,
     connLabel,
@@ -426,7 +448,7 @@ export function useDroneSocket() {
     everConnected,
   };
 
-  return { state, token, setToken, connect: reconnectNow, sendCommand, sendAudio, setTrack };
+  return { state, token, setToken, connect: reconnectNow, sendCommand, sendAudio, setTrack, onFrame };
 }
 
 export type UseDroneSocket = ReturnType<typeof useDroneSocket>;

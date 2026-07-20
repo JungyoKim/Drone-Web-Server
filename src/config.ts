@@ -36,6 +36,16 @@ export const config = {
   trackYawGain: Number(Bun.env.TRACK_YAW_GAIN ?? 60),
   trackAltGain: Number(Bun.env.TRACK_ALT_GAIN ?? 60),
   trackDistGain: Number(Bun.env.TRACK_DIST_GAIN ?? 80),
+
+  // ---- Live camera preview (browser UI, independent of ArUco math) ----
+  /** Preview output width in px; height auto-scales (ffmpeg `scale=W:-2`)
+   * to preserve the source aspect ratio. Smaller = less bandwidth/CPU. */
+  videoPreviewWidth: Number(Bun.env.VIDEO_PREVIEW_WIDTH ?? 480),
+  /** ffmpeg `-q:v` for the preview MJPEG stream: 2 (best) .. 31 (worst). */
+  videoPreviewQuality: Number(Bun.env.VIDEO_PREVIEW_QUALITY ?? 6),
+  /** Upper bound on preview frames forwarded to browsers per second,
+   * independent of ffmpeg's actual decode rate. */
+  videoPreviewMaxFps: Number(Bun.env.VIDEO_PREVIEW_MAX_FPS ?? 12),
 } as const;
 
 export function assertVoiceConfigured(): void {

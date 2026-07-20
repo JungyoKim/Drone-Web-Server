@@ -67,6 +67,11 @@ export type ServerToBrowser =
   | { type: "status"; deviceOnline: boolean; battery: number | null; isFlying: boolean | null }
   /** ArUco tracking telemetry, broadcast a few times a second while active. */
   | { type: "tracking"; active: boolean; markerFound: boolean; markerId?: number; dx?: number; dy?: number; sizeRatio?: number; rc?: { a: number; b: number; c: number; d: number } }
+  /** Live camera preview frame (JPEG, base64, no `data:` prefix), pushed
+   * while tracking is active. Independent of the "tracking" telemetry
+   * above -- this is purely the raw camera view for the UI, not steering
+   * data, and arrives on its own cadence (see VIDEO_PREVIEW_MAX_FPS). */
+  | { type: "frame"; jpeg: string }
   /** Recoverable error surfaced to the user. */
   | { type: "error"; message: string }
   | { type: "pong" };

@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { config } from "./config.ts";
 import { mapCommand, parseTelloReply } from "./tello.ts";
 import { parseAudioCommand, pingText, describeCommand } from "./gemini.ts";
-import { TrackingSession, type SteeringResult, type SteeringConfig } from "./tracking.ts";
+import { TrackingSession, VideoPreviewSession, type SteeringResult, type SteeringConfig, type PreviewConfig } from "./tracking.ts";
 import type {
   BrowserToServer,
   ServerToBrowser,
@@ -144,6 +144,7 @@ export async function runCommandSequence(
 
 let trackingActive = false;
 let trackingSession: TrackingSession | null = null;
+let previewSession: VideoPreviewSession | null = null;
 let trackRcTimer: ReturnType<typeof setInterval> | null = null;
 let lastSteering: SteeringResult | null = null;
 let lastSteeringAtMs = 0;
@@ -166,17 +167,25 @@ const steeringConfig: SteeringConfig = {
   distGain: config.trackDistGain,
 };
 
+const previewConfig: PreviewConfig = {
+  width: config.videoPreviewWidth,
+  quality: config.videoPreviewQuality,
+  maxFps: config.videoPreviewMaxFps,
+};
+
 /** Stop tracking unconditionally: safe to call when already stopped (idempotent),
  * from an emergency event, a manual command, `{type:"track",on:false}`, or device
  * disconnect. Always zeroes rc before tearing down so the drone never keeps the
  * last commanded velocity. */
 function stopTracking(): void {
-  if (!trackingActive && !trackingSession && !trackRcTimer) return;
+  if (!trackingActive && !trackingSession && !previewSession && !trackRcTimer) return;
   trackingActive = false;
   if (trackRcTimer) { clearInterval(trackRcTimer); trackRcTimer = null; }
   if (device && deviceAuthed) sendDevice(device, { type: "rc", a: 0, b: 0, c: 0, d: 0 });
   trackingSession?.stop();
   trackingSession = null;
+  previewSession?.stop();
+  previewSession = null;
   lastSteering = null;
   if (device && deviceAuthed) {
     const r = dispatch({ action: "streamoff" }, null);
@@ -228,6 +237,15 @@ async function startTracking(ws: Socket): Promise<void> {
     (err) => console.error("[track] session error:", err),
   );
   trackingSession.start();
+
+  previewSession = new VideoPreviewSession(
+    previewConfig,
+    (jpeg) => {
+      broadcastBrowsers({ type: "frame", jpeg: Buffer.from(jpeg).toString("base64") });
+    },
+    (err) => console.error("[preview] session error:", err),
+  );
+  previewSession.start();
   trackingActive = true;
   // Immediate feedback -- don't leave the browser's toggle in limbo until the
   // first frame decodes (which may be seconds away, or never if the ESP32's
@@ -396,6 +414,7 @@ try {
     socket: {
       data(_socket, buf) {
         trackingSession?.feedVideoChunk(buf);
+        previewSession?.feedVideoChunk(buf);
       },
     },
   });

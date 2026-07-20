@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { computeSteering, pickTargetMarker, type SteeringConfig } from "./tracking.ts";
+import { computeSteering, pickTargetMarker, splitJpegFrames, type SteeringConfig } from "./tracking.ts";
 
 /**
  * Unit tests for the pure, safety-critical steering math in tracking.ts.
@@ -171,5 +171,87 @@ describe("pickTargetMarker", () => {
     const picked = pickTargetMarker([small, large, medium], undefined);
     expect(picked).not.toBeNull();
     expect(picked!.id).toBe(2);
+  });
+});
+
+/**
+ * Unit tests for the pure MJPEG frame-splitter that feeds the live camera
+ * preview (VideoPreviewSession). No ffmpeg/UDP/subprocess involved -- just
+ * hand-built byte buffers, matching this file's existing style.
+ */
+describe("splitJpegFrames", () => {
+  function jpeg(payload: number[] = [1, 2, 3]): number[] {
+    return [0xff, 0xd8, ...payload, 0xff, 0xd9];
+  }
+
+  test("single complete frame in one chunk -> one frame, empty rest", () => {
+    const chunk = new Uint8Array(jpeg([1, 2, 3]));
+    const { frames, rest } = splitJpegFrames(new Uint8Array(0), chunk);
+    expect(frames.length).toBe(1);
+    expect(Array.from(frames[0]!)).toEqual(Array.from(chunk));
+    expect(rest.length).toBe(0);
+  });
+
+  test("multiple complete frames in one chunk -> all returned in order", () => {
+    const f1 = jpeg([1]);
+    const f2 = jpeg([2, 2]);
+    const f3 = jpeg([3, 3, 3]);
+    const chunk = new Uint8Array([...f1, ...f2, ...f3]);
+    const { frames, rest } = splitJpegFrames(new Uint8Array(0), chunk);
+    expect(frames.length).toBe(3);
+    expect(Array.from(frames[0]!)).toEqual(f1);
+    expect(Array.from(frames[1]!)).toEqual(f2);
+    expect(Array.from(frames[2]!)).toEqual(f3);
+    expect(rest.length).toBe(0);
+  });
+
+  test("frame split across two chunks -> first call withholds it, second call completes it", () => {
+    const full = jpeg([9, 9, 9, 9]);
+    const chunk1 = new Uint8Array(full.slice(0, 4)); // SOI + partial payload, no EOI yet
+    const chunk2 = new Uint8Array(full.slice(4)); // rest of payload + EOI
+
+    const first = splitJpegFrames(new Uint8Array(0), chunk1);
+    expect(first.frames.length).toBe(0);
+    expect(Array.from(first.rest)).toEqual(Array.from(chunk1));
+
+    const second = splitJpegFrames(first.rest, chunk2);
+    expect(second.frames.length).toBe(1);
+    expect(Array.from(second.frames[0]!)).toEqual(full);
+    expect(second.rest.length).toBe(0);
+  });
+
+  test("SOI marker itself split across chunk boundary (trailing lone 0xFF) -> reassembled, not dropped", () => {
+    const full = jpeg([7, 7]);
+    const chunk1 = new Uint8Array([0xaa, 0xbb, 0xff]); // garbage, then a lone leading byte of the SOI
+    const chunk2 = new Uint8Array([0xd8, ...full.slice(2)]); // completes SOI, then rest of frame
+
+    const first = splitJpegFrames(new Uint8Array(0), chunk1);
+    expect(first.frames.length).toBe(0);
+    expect(Array.from(first.rest)).toEqual([0xff]); // garbage dropped, lone 0xFF kept
+
+    const second = splitJpegFrames(first.rest, chunk2);
+    expect(second.frames.length).toBe(1);
+    expect(Array.from(second.frames[0]!)).toEqual(full);
+  });
+
+  test("garbage bytes before the first SOI are dropped, never surfaced as a frame", () => {
+    const chunk = new Uint8Array([0x00, 0x11, 0x22, ...jpeg([5])]);
+    const { frames, rest } = splitJpegFrames(new Uint8Array(0), chunk);
+    expect(frames.length).toBe(1);
+    expect(Array.from(frames[0]!)).toEqual(jpeg([5]));
+    expect(rest.length).toBe(0);
+  });
+
+  test("no SOI anywhere -> no frames, empty rest (all dropped as garbage)", () => {
+    const chunk = new Uint8Array([0x00, 0x11, 0x22, 0x33]);
+    const { frames, rest } = splitJpegFrames(new Uint8Array(0), chunk);
+    expect(frames.length).toBe(0);
+    expect(rest.length).toBe(0);
+  });
+
+  test("empty chunk -> no frames, rest unchanged from pending", () => {
+    const { frames, rest } = splitJpegFrames(new Uint8Array(0), new Uint8Array(0));
+    expect(frames.length).toBe(0);
+    expect(rest.length).toBe(0);
   });
 });

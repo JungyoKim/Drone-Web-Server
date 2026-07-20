@@ -72,6 +72,7 @@ export default function App() {
                   tracking={ds.state.tracking}
                   deviceOnline={ds.state.deviceOnline}
                   onToggle={ds.setTrack}
+                  onFrame={ds.onFrame}
                 />
               }
             />
