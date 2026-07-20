@@ -392,8 +392,19 @@ function onDeviceMessage(ws: Socket, raw: string): void {
     case "event": {
       // Hardware events. Emergency button lands the drone directly over UDP;
       // also cancel any queued multi-command sequence so nothing else fires.
-      if (msg.event === "emergency_button") { abortSequence(); stopTracking(); isFlying = false; broadcastStatus(); }
-      broadcastBrowsers({ type: "error", message: `device event: ${msg.event}${msg.detail ? ` (${msg.detail})` : ""}` });
+      if (msg.event === "emergency_button") {
+        abortSequence();
+        stopTracking();
+        isFlying = false;
+        broadcastStatus();
+        broadcastBrowsers({ type: "error", message: "비상 착륙 버튼이 눌렸습니다" });
+        return;
+      }
+      // tello_found / tello_lost are routine discovery status, not failures
+      // -- surface via "info" so the UI doesn't red-toast a normal "found
+      // the drone" event.
+      const label = msg.event === "tello_found" ? "Tello 드론 발견됨" : "Tello 드론 연결 끊김";
+      broadcastBrowsers({ type: "info", message: `${label}${msg.detail ? ` (${msg.detail})` : ""}` });
       return;
     }
 

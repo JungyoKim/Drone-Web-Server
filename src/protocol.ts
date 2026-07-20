@@ -72,6 +72,10 @@ export type ServerToBrowser =
    * above -- this is purely the raw camera view for the UI, not steering
    * data, and arrives on its own cadence (see VIDEO_PREVIEW_MAX_FPS). */
   | { type: "frame"; jpeg: string }
+  /** Non-error status update worth logging (e.g. a positive device event
+   * like the Tello being (re)discovered) -- shown in the UI log without the
+   * red toast/err styling that "error" gets. */
+  | { type: "info"; message: string }
   /** Recoverable error surfaced to the user. */
   | { type: "error"; message: string }
   | { type: "pong" };

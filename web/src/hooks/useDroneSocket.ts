@@ -260,6 +260,10 @@ export function useDroneSocket() {
           for (const cb of frameListenersRef.current) cb(msg.jpeg);
           return;
 
+        case "info":
+          appendLog("info", String(msg.message ?? ""));
+          return;
+
         case "error":
           setProcessing(false);
           appendLog("err", `오류: ${String(msg.message ?? "")}`);
