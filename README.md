@@ -207,6 +207,41 @@ graph LR
 - **v1 has no lateral strafe** (`rc`'s `a`/roll channel is always 0) — yaw
   alone re-centers horizontally, to avoid uncommanded sideways drift.
 
+### Local tracking (phone<->ESP32 direct, no cloud round-trip)
+
+A second, independent tracking mode — same steering math, but video and `rc`
+never leave the phone's hotspot LAN, cutting out two cellular round trips
+(video up, `rc` down). Runs entirely client-side in the browser: WebCodecs
+decodes the H.264 the ESP32 relays locally, `js-aruco2` detects, the same
+`computeSteering` logic (mirrored in `web/src/lib/tracking.ts`) drives `rc`
+straight back to the ESP32 over its own local WebSocket server (`:81`,
+`/track` — see `firmware/README.md`'s "Local tracking WebSocket server"
+section). The existing cloud connection stays open alongside it for voice,
+manual buttons, takeoff/land/emergency, and the marker designer — only the
+high-frequency tracking loop moves local.
+
+**To run it:**
+
+1. Flash the current firmware (`cd firmware && pio run -t upload`) — it must
+   include the local `/track` server; older firmware won't have it.
+2. Start the backend and open the app as usual (see "Run the backend" above)
+   and connect — the cloud connection must be up, since it's still what
+   requests `streamon`/`streamoff` (the local channel only ever carries `rc`,
+   by design, so it can't do that itself; see the reasoning inline in
+   `useLocalTrack.ts`'s `onStreamToggle` doc comment).
+3. Open the **로컬 추적** tab. Enter the ESP32's address (defaults to
+   `tello.local` via the mDNS the firmware advertises; type its IP instead if
+   `.local` resolution doesn't work on your network/browser) and its device
+   token (the same `DEVICE_TOKEN` the ESP32 was flashed with).
+4. Click **로컬 추적 시작**. This requests `streamon` over the cloud
+   connection, then opens the local WebSocket, decodes video, and starts
+   steering — all independent of the cloud's own tracking session (don't
+   also toggle the cloud **마커 추적** tab on at the same time; both would
+   try to drive `rc` at once).
+5. A custom marker drawn in **마커 만들기** is picked up automatically (same
+   pattern the cloud path uses); otherwise it falls back to the static
+   `ARUCO_MIP_36h12` dictionary, same as the cloud default.
+
 ### Custom 4x4 markers (draw your own, no printer-shop dictionary lookup)
 
 The `/marker` tab is both the marker *designer* and its *tracking config* in

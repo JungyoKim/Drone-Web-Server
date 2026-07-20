@@ -114,6 +114,18 @@ interface UseLocalTrackOptions {
    * low-latency channel never streams movement commands the cloud path
    * doesn't believe are safe. */
   isFlying: boolean | null;
+  /** Sends a one-off `streamon`/`streamoff` over the CLOUD connection (see
+   * useDroneSocket's sendCommand) -- Tello never emits video without an
+   * explicit `streamon`, and the local WS channel deliberately carries no
+   * command traffic besides `rc` (per local-track-protocol.md), so this is
+   * the only way to turn the stream on. Called with `true` right before
+   * opening the local WS, and `false` on stop/unmount -- deliberately NOT
+   * `{type:"track",on}` (that would also spin up the cloud's OWN ffmpeg
+   * decode/preview session and rc loop, racing this one for control of the
+   * same `rc` channel). Requires the cloud connection to be up; if it
+   * isn't, this is a no-op and the local canvas just stays blank until it
+   * is -- same dependency voice/manual/emergency already have. */
+  onStreamToggle: (on: boolean) => void;
 }
 
 /** `{ type: "rc", a, b, c, d }` -- the ONLY message this channel ever
@@ -148,7 +160,7 @@ const ZERO_RC = { a: 0, b: 0, c: 0, d: 0 };
  * the exposed actions; none of them touch the WebSocket, decoder, or
  * detector directly.
  */
-export function useLocalTrack({ markerPattern, isFlying }: UseLocalTrackOptions) {
+export function useLocalTrack({ markerPattern, isFlying, onStreamToggle }: UseLocalTrackOptions) {
   const [host, setHostState] = useState<string>(() => loadCookie(HOST_COOKIE) || DEFAULT_HOST);
   const [token, setTokenState] = useState<string>(() => loadCookie(TOKEN_COOKIE));
   const [active, setActiveState] = useState(false);
@@ -163,6 +175,8 @@ export function useLocalTrack({ markerPattern, isFlying }: UseLocalTrackOptions)
   markerPatternRef.current = markerPattern;
   const isFlyingRef = useRef(isFlying);
   isFlyingRef.current = isFlying;
+  const onStreamToggleRef = useRef(onStreamToggle);
+  onStreamToggleRef.current = onStreamToggle;
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamRef = useRef<H264Stream | null>(null);
@@ -233,6 +247,7 @@ export function useLocalTrack({ markerPattern, isFlying }: UseLocalTrackOptions)
         }
       }
       wsRef.current = null;
+      onStreamToggleRef.current(false); // matches server.ts's stopTracking(): always call streamoff on any stop, unconditionally
       streamRef.current?.close();
       streamRef.current = null;
       lastResultRef.current = null;
@@ -285,6 +300,7 @@ export function useLocalTrack({ markerPattern, isFlying }: UseLocalTrackOptions)
     }
     saveCookie(HOST_COOKIE, currentHost);
     saveCookie(TOKEN_COOKIE, currentToken);
+    onStreamToggleRef.current(true); // request streamon over the cloud connection before opening the local WS
 
     // A web-drawn custom pattern overrides the statically configured
     // dictionary for this session, always id 0 (a custom dictionary holds

@@ -20,7 +20,16 @@ export default function App() {
   // simultaneously, per local-track-protocol.md. Fed the cloud's
   // markerPattern/isFlying so the local detector reuses the same
   // dictionary and never streams movement while the drone isn't airborne.
-  const lt = useLocalTrack({ markerPattern: ds.state.markerPattern, isFlying: ds.state.isFlying });
+  // onStreamToggle sends a plain one-off streamon/streamoff over the CLOUD
+  // connection (NOT setTrack -- that would also start the cloud's own
+  // ffmpeg/rc tracking loop, racing this one) since Tello only emits video
+  // after an explicit streamon and the local WS channel carries no command
+  // traffic besides `rc` by design.
+  const lt = useLocalTrack({
+    markerPattern: ds.state.markerPattern,
+    isFlying: ds.state.isFlying,
+    onStreamToggle: (on) => ds.sendCommand({ action: on ? "streamon" : "streamoff" }),
+  });
   const controlsDisabled = !ds.state.deviceOnline;
 
   // Auto-open the connect dialog when there's no saved token (first visit --
