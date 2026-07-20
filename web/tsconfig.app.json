@@ -29,5 +29,9 @@
   /* ../src/protocol.ts: the Bun backend's wire-contract types, imported
    * directly (see src/lib/ws-protocol.ts) so the frontend can never drift
    * from the backend's message shapes without a compile error. */
-  "include": ["src", "../src/protocol.ts"]
+  "include": ["src", "../src/protocol.ts"],
+  /* *.test.ts files are checked separately by tsconfig.test.json, which
+   * needs bun-types (for `bun:test` + the `Bun` global that
+   * ../src/tracking.ts uses) -- globals the app build must NOT see. */
+  "exclude": ["src/**/*.test.ts"]
 }

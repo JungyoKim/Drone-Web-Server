@@ -44,6 +44,13 @@ export interface DroneSocketState {
   connLabel: string;
   deviceOnline: boolean;
   battery: number | null;
+  /** Best-effort inference of whether the drone is airborne, mirrored
+   * straight from the backend's `status` message -- unknown (null) until
+   * the first takeoff/land/emergency reply is observed this session. Used
+   * by the local-track data plane (useLocalTrack) to gate sending
+   * non-zero rc: the cloud connection is the only channel that actually
+   * knows flight state, so the local channel defers to it here. */
+  isFlying: boolean | null;
   tracking: TrackingState;
   log: LogEntry[];
   processing: boolean;
@@ -108,6 +115,7 @@ export function useDroneSocket() {
   const [connLabel, setConnLabel] = useState<string>(CONN_LABELS.idle);
   const [deviceOnline, setDeviceOnline] = useState(false);
   const [battery, setBattery] = useState<number | null>(null);
+  const [isFlying, setIsFlying] = useState<boolean | null>(null);
   const [tracking, setTracking] = useState<TrackingState>(IDLE_TRACKING);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [processing, setProcessing] = useState(false);
@@ -232,6 +240,7 @@ export function useDroneSocket() {
         case "status":
           setDeviceOnline(!!msg.deviceOnline);
           setBattery(typeof msg.battery === "number" ? msg.battery : null);
+          setIsFlying(typeof msg.isFlying === "boolean" ? msg.isFlying : null);
           return;
 
         case "marker_pattern":
@@ -470,6 +479,7 @@ export function useDroneSocket() {
     connLabel,
     deviceOnline,
     battery,
+    isFlying,
     tracking,
     log,
     processing,

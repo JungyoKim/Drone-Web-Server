@@ -8,6 +8,7 @@ const NAV_LINKS = [
   { to: "/manual", label: "수동" },
   { to: "/voice", label: "음성" },
   { to: "/track", label: "마커 추적" },
+  { to: "/track-local", label: "로컬 추적" },
   { to: "/marker", label: "마커 만들기" },
 ] as const;
 

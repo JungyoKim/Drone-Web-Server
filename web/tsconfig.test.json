@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    /* bun-types provides both the `Bun` global (needed transitively by
+     * ../src/tracking.ts, which tracking.test.ts imports for real, at
+     * runtime, to cross-check web/src/lib/tracking.ts against it) and the
+     * `bun:test` module tracking.test.ts / h264decode.test.ts import --
+     * the SAME combination (DOM lib + bun-types) already used by the
+     * repo-root tsconfig.json for the backend itself. Kept in its own
+     * project (not merged into tsconfig.app.json) because the app build
+     * must NOT pull `Bun`-only globals into the browser bundle's type
+     * checking, and `bun:test` isn't resolvable there either.
+     * vite/client is ALSO needed here (same as tsconfig.app.json) purely
+     * for its ambient `declare module '*?raw'` -- web/src/lib/tracking.ts
+     * (which tracking.test.ts imports) uses that suffix to load js-
+     * aruco2's source as text, and this project checks that same file. */
+    "types": ["bun-types", "vite/client"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    "paths": { "@/*": ["./src/*"] },
+
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  /* Only the test files themselves, plus the backend module
+   * tracking.test.ts imports directly for the mirror-verification check --
+   * everything else the app needs is covered by tsconfig.app.json. */
+  "include": ["src/**/*.test.ts", "../src/tracking.ts"]
+}

@@ -8,12 +8,19 @@ import CommandLog from "@/components/CommandLog";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import ManualControls from "@/components/ManualControls";
 import TrackingPanel from "@/components/TrackingPanel";
+import LocalTrackPanel from "@/components/LocalTrackPanel";
 import MarkerDesigner from "@/components/MarkerDesigner";
 import { Toaster } from "@/components/ui/sonner";
 import { useDroneSocket } from "@/hooks/useDroneSocket";
+import { useLocalTrack } from "@/hooks/useLocalTrack";
 
 export default function App() {
   const ds = useDroneSocket();
+  // Independent of the cloud connection above -- both hooks run
+  // simultaneously, per local-track-protocol.md. Fed the cloud's
+  // markerPattern/isFlying so the local detector reuses the same
+  // dictionary and never streams movement while the drone isn't airborne.
+  const lt = useLocalTrack({ markerPattern: ds.state.markerPattern, isFlying: ds.state.isFlying });
   const controlsDisabled = !ds.state.deviceOnline;
 
   // Auto-open the connect dialog when there's no saved token (first visit --
@@ -74,6 +81,21 @@ export default function App() {
                   deviceOnline={ds.state.deviceOnline}
                   onToggle={ds.setTrack}
                   onFrame={ds.onFrame}
+                />
+              }
+            />
+            <Route
+              path="/track-local"
+              element={
+                <LocalTrackPanel
+                  state={lt.state}
+                  host={lt.host}
+                  onHostChange={lt.setHost}
+                  token={lt.token}
+                  onTokenChange={lt.setToken}
+                  active={lt.active}
+                  onToggle={lt.setActive}
+                  onFrame={lt.onFrame}
                 />
               }
             />
